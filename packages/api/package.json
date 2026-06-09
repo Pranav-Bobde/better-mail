@@ -1,0 +1,29 @@
+{
+  "name": "@code-main/api",
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {},
+  "dependencies": {
+    "@code-main/auth": "workspace:*",
+    "@code-main/db": "workspace:*",
+    "@code-main/env": "workspace:*",
+    "@orpc/client": "catalog:",
+    "@orpc/openapi": "catalog:",
+    "@orpc/server": "catalog:",
+    "@orpc/zod": "catalog:",
+    "dotenv": "catalog:",
+    "next": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@code-main/config": "workspace:*",
+    "typescript": "catalog:"
+  }
+}

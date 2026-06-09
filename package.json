@@ -1,0 +1,31 @@
+{
+  "name": "code-main",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "check-types": "turbo check-types",
+    "dev:web": "turbo -F web dev",
+    "db:push": "turbo -F @code-main/db db:push",
+    "db:studio": "turbo -F @code-main/db db:studio",
+    "db:generate": "turbo -F @code-main/db db:generate",
+    "db:migrate": "turbo -F @code-main/db db:migrate"
+  },
+  "dependencies": {
+    "@code-main/env": "workspace:*",
+    "dotenv": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@code-main/config": "workspace:*",
+    "@types/node": "^22.13.14",
+    "turbo": "^2.9.16",
+    "typescript": "catalog:"
+  },
+  "packageManager": "pnpm@10.12.1"
+}
