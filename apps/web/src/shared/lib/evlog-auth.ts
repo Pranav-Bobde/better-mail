@@ -1,7 +1,7 @@
 import { auth } from "@code-main/auth";
 import { createAuthMiddleware, type BetterAuthInstance } from "evlog/better-auth";
 
-import { useLogger } from "@/lib/evlog";
+import { useLogger } from "@/shared/lib/evlog";
 
 const identifyUser = createAuthMiddleware(auth as BetterAuthInstance, {
   exclude: ["/api/auth/**"],

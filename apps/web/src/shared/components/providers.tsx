@@ -4,9 +4,9 @@ import { Toaster } from "@code-main/ui/components/sonner";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 
-import { queryClient } from "@/utils/orpc";
+import { queryClient } from "@/shared/utils/orpc";
 
-import { ThemeProvider } from "./theme-provider";
+import { ThemeProvider } from "@/shared/components/theme-provider";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   return (

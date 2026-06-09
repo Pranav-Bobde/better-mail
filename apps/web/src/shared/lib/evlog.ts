@@ -1,7 +1,7 @@
 import { createEvlog } from "evlog/next";
 import { createInstrumentation } from "evlog/next/instrumentation";
 
-export const { withEvlog, useLogger, log, createError } = createEvlog({
+export const { withEvlog, useLogger } = createEvlog({
   service: "code-main-web",
 });
 

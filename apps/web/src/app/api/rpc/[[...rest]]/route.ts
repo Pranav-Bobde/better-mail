@@ -7,8 +7,8 @@ import { RPCHandler } from "@orpc/server/fetch";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
 import { NextRequest } from "next/server";
 
-import { withEvlog } from "@/lib/evlog";
-import { identifyEvlogUser } from "@/lib/evlog-auth";
+import { identifyEvlogUser } from "@/shared/lib/evlog-auth";
+import { withEvlog } from "@/shared/lib/evlog";
 
 const rpcHandler = new RPCHandler(appRouter, {
   interceptors: [

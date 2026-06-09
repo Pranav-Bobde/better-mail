@@ -12,7 +12,7 @@ import { Skeleton } from "@code-main/ui/components/skeleton";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-import { authClient } from "@/lib/auth-client";
+import { authClient } from "@/shared/lib/auth-client";
 
 export default function UserMenu() {
   const router = useRouter();

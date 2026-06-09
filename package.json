@@ -9,7 +9,15 @@
   "scripts": {
     "dev": "turbo dev",
     "build": "turbo build",
+    "type": "pnpm run typecheck",
+    "typecheck": "turbo check-types",
     "check-types": "turbo check-types",
+    "lint": "oxlint . && eslint .",
+    "fallow": "fallow audit --base HEAD --format compact",
+    "fmt": "oxfmt --check . '!refs/**/*.md'",
+    "fmt:fix": "oxfmt --write . '!refs/**/*.md'",
+    "format": "oxfmt --write",
+    "verify": "pnpm run typecheck && pnpm run lint && pnpm run fmt && pnpm run fallow && pnpm run build",
     "dev:web": "turbo -F web dev",
     "db:push": "turbo -F @code-main/db db:push",
     "db:studio": "turbo -F @code-main/db db:studio",
@@ -23,9 +31,20 @@
   },
   "devDependencies": {
     "@code-main/config": "workspace:*",
+    "@eslint/compat": "^2.1.0",
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.13.14",
+    "@typescript-eslint/parser": "^8.61.0",
+    "eslint": "^10.4.1",
+    "eslint-plugin-boundaries": "^6.0.2",
+    "eslint-plugin-neverthrow": "^1.1.4",
+    "fallow": "^2.89.0",
+    "globals": "^17.6.0",
+    "oxfmt": "^0.54.0",
+    "oxlint": "^1.69.0",
     "turbo": "^2.9.16",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "typescript-eslint": "^8.61.0"
   },
   "packageManager": "pnpm@10.12.1"
 }
