@@ -1,17 +1,23 @@
 import type { RouterClient } from "@orpc/server";
 
-import { protectedProcedure, publicProcedure } from "../index";
+import { createRpcSuccessFields } from "../observability/rpc/fields";
+import { publicProcedure } from "../index";
 
 export const appRouter = {
-  healthCheck: publicProcedure.handler(() => {
-    return "OK";
-  }),
-  privateData: protectedProcedure.handler(({ context }) => {
+  healthCheck: publicProcedure.handler(({ context }) => {
+    context.log?.set({
+      ...createRpcSuccessFields("healthCheck"),
+      health: {
+        status: "ok",
+      },
+    });
+
     return {
-      message: "This is private",
-      user: context.session?.user,
+      status: "ok",
+      data: {
+        health: "ok",
+      },
     };
   }),
 };
-export type AppRouter = typeof appRouter;
 export type AppRouterClient = RouterClient<typeof appRouter>;

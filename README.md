@@ -27,7 +27,15 @@ pnpm install
 This project uses PostgreSQL with Prisma.
 
 1. Make sure you have a PostgreSQL database set up.
-2. Update your `apps/web/.env` file with your PostgreSQL connection details.
+2. Update your `apps/web/.env` file with your local environment values:
+
+```bash
+DATABASE_URL="postgresql://..."
+APP_URL="http://localhost:4000"
+BETTER_AUTH_SECRET="at-least-32-characters-secret-value"
+BETTER_AUTH_URL="http://localhost:4000"
+CORS_ORIGIN="http://localhost:4000"
+```
 
 3. Apply the schema to your database:
 
@@ -41,7 +49,7 @@ Then, run the development server:
 pnpm run dev
 ```
 
-Open [http://localhost:3001](http://localhost:3001) in your browser to see the fullstack application.
+Open [http://localhost:4000](http://localhost:4000) in your browser to see the fullstack application.
 
 ## UI Customization
 

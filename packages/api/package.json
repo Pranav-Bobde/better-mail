@@ -21,6 +21,7 @@
     "@orpc/server": "catalog:",
     "@orpc/zod": "catalog:",
     "dotenv": "catalog:",
+    "evlog": "^2.18.1",
     "next": "catalog:",
     "zod": "catalog:"
   },

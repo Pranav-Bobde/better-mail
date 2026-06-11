@@ -1,4 +1,5 @@
 import { auth } from "@code-main/auth";
+import type { EvlogOrpcContext } from "evlog/orpc";
 import type { NextRequest } from "next/server";
 
 export async function createContext(req: NextRequest) {
@@ -11,4 +12,5 @@ export async function createContext(req: NextRequest) {
   };
 }
 
-export type Context = Awaited<ReturnType<typeof createContext>>;
+export type BaseContext = Awaited<ReturnType<typeof createContext>>;
+export type Context = BaseContext & Partial<EvlogOrpcContext>;
