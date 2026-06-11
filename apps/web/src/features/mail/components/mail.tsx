@@ -10,6 +10,7 @@ import {
   Search,
   Send,
   ShoppingCart,
+  Sparkles,
   Trash2,
   Users2,
 } from "lucide-react";
@@ -26,6 +27,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@code-main/ui/componen
 import { cn } from "@code-main/ui/lib/utils";
 
 import { AccountSwitcher } from "@/features/mail/components/account-switcher";
+import { AskAIPanel } from "@/features/mail/components/ask-ai-panel";
 import { mails, type Mail as MailItem } from "@/features/mail/components/mail-data";
 import { MailDisplay } from "@/features/mail/components/mail-display";
 import {
@@ -66,12 +68,14 @@ export function Mail({
 }) {
   const [isCollapsed, setIsCollapsed] = React.useState(defaultCollapsed);
   const [selected, setSelected] = React.useState<MailItem["id"] | null>(mails[0].id);
+  const [isAiOpen, setIsAiOpen] = React.useState(false);
   const layout = createMailLayout(defaultLayout);
   const unreadMails = mails.filter(isUnreadMail);
 
   return (
+    <div className="flex h-full">
     <ResizablePanelGroup
-      className="h-full items-stretch"
+      className="h-full flex-1 items-stretch"
       defaultLayout={layout}
       onLayoutChanged={persistMailLayout}
       orientation="horizontal"
@@ -99,6 +103,14 @@ export function Mail({
                 Unread
               </TabsTrigger>
             </TabsList>
+            <button
+              className="ml-2 flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+              onClick={() => setIsAiOpen((v) => !v)}
+              type="button"
+            >
+              <Sparkles className="size-3.5" />
+              Ask AI
+            </button>
           </div>
           <Separator />
           <div className="bg-background/95 p-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -124,6 +136,8 @@ export function Mail({
         <MailDisplay mail={mails.find((item) => item.id === selected) ?? null} />
       </ResizablePanel>
     </ResizablePanelGroup>
+    <AskAIPanel isOpen={isAiOpen} onClose={() => setIsAiOpen(false)} />
+    </div>
   );
 }
 
