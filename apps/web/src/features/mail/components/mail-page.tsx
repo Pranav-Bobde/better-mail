@@ -23,9 +23,9 @@ export async function MailPage() {
   const defaultCollapsed = defaultLayout[mailPanelIds.sidebar] <= navCollapsedSize + 0.5;
 
   return (
-    <main className="h-full overflow-hidden bg-background p-0 text-foreground md:p-6">
+    <main className="h-full overflow-hidden bg-background text-foreground">
       <HealthProbe />
-      <section className="h-full overflow-hidden rounded-lg border bg-background shadow">
+      <section className="h-full overflow-hidden bg-background">
         <div className="hidden h-full flex-col md:flex">
           <Mail
             defaultCollapsed={defaultCollapsed}
