@@ -2,12 +2,19 @@
 
 import { type MailboxData } from "@code-main/api/mail/contracts";
 import {
+  CopilotChatConfigurationProvider,
+  CopilotKitProvider,
+  useAgentContext,
+  useFrontendTool,
+} from "@copilotkit/react-core/v2";
+import {
   AlertCircle,
   Archive,
   ArchiveX,
   File,
   Inbox,
   MessagesSquare,
+  Pencil,
   Search,
   Send,
   ShoppingCart,
@@ -30,7 +37,24 @@ import { cn } from "@code-main/ui/lib/utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { AccountSwitcher } from "@/features/mail/components/account-switcher";
-import { AskAIPanel } from "@/features/mail/components/ask-ai-panel";
+import {
+  AskAIPanel,
+  DraftEmailPreviewCard,
+  draftDecisionKey,
+  type DraftEmailDecision,
+} from "@/features/mail/components/ask-ai-panel";
+import {
+  createAiSearchQuery,
+  draftEmailParameters,
+  emptyComposeState,
+  filterEmailParameters,
+  getClientMailSearchQuery,
+  getAiMailView,
+  type ComposeState,
+  type DraftEmailInput,
+  type EmailFilterInput,
+  type MailView,
+} from "@/features/mail/components/mail-ai-tools";
 import { mails, type Mail as MailItem } from "@/features/mail/components/mail-data";
 import { MailDisplay } from "@/features/mail/components/mail-display";
 import {
@@ -61,7 +85,12 @@ const fallbackCounts = {
   updates: 342,
 } satisfies MailboxCounts;
 
-type MailView = "all" | "unread";
+const copilotFetchBindingKey = "__codeMainCopilotFetchBound";
+
+type WindowWithCopilotFetchBinding = Window &
+  typeof globalThis & {
+    [copilotFetchBindingKey]?: true;
+  };
 
 export function Mail({
   defaultCollapsed = false,
@@ -72,16 +101,64 @@ export function Mail({
   readonly defaultLayout?: MailLayout;
   readonly navCollapsedSize?: number;
 }) {
+  bindBrowserFetchForCopilotKit();
+
+  const [threadId] = React.useState(() => `mail-${crypto.randomUUID()}`);
+
+  return (
+    <CopilotKitProvider runtimeUrl="/api/copilotkit" useSingleEndpoint>
+      <CopilotChatConfigurationProvider agentId="default" hasExplicitThreadId threadId={threadId}>
+        <MailWorkspace
+          defaultCollapsed={defaultCollapsed}
+          defaultLayout={defaultLayout}
+          navCollapsedSize={navCollapsedSize}
+          threadId={threadId}
+        />
+      </CopilotChatConfigurationProvider>
+    </CopilotKitProvider>
+  );
+}
+
+function bindBrowserFetchForCopilotKit() {
+  if (typeof window === "undefined") return;
+
+  const browserWindow = window as WindowWithCopilotFetchBinding;
+  if (browserWindow[copilotFetchBindingKey]) return;
+
+  // CopilotKit's browser agent currently calls a detached fetch reference in Chrome.
+  browserWindow.fetch = browserWindow.fetch.bind(browserWindow);
+  browserWindow[copilotFetchBindingKey] = true;
+}
+
+function MailWorkspace({
+  defaultCollapsed,
+  defaultLayout,
+  navCollapsedSize,
+  threadId,
+}: {
+  readonly defaultCollapsed: boolean;
+  readonly defaultLayout: MailLayout;
+  readonly navCollapsedSize: number;
+  readonly threadId: string;
+}) {
   const [isCollapsed, setIsCollapsed] = React.useState(defaultCollapsed);
   const [selected, setSelected] = React.useState<MailItem["id"] | null>(mails[0].id);
   const [isAiOpen, setIsAiOpen] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState("");
   const [view, setView] = React.useState<MailView>("all");
+  const [compose, setCompose] = React.useState<ComposeState>(emptyComposeState);
+  const [composeNotice, setComposeNotice] = React.useState("");
+  const [activeDraft, setActiveDraft] = React.useState<DraftEmailInput | null>(null);
+  const [draftDecisions, setDraftDecisions] = React.useState<Record<string, DraftEmailDecision>>(
+    {},
+  );
+  const [pendingOpenSearchQuery, setPendingOpenSearchQuery] = React.useState<string | null>(null);
   const layout = createMailLayout(defaultLayout);
   const mailbox = useMailboxData(searchQuery, view);
   const sendMailMutation = useSendReplyMutation();
   const activeMails = getActiveMails(mailbox);
-  const searchFilteredMails = getSearchFilteredMails(activeMails, searchQuery);
+  const clientSearchQuery = getClientMailSearchQuery(searchQuery, mailbox !== null);
+  const searchFilteredMails = getSearchFilteredMails(activeMails, clientSearchQuery);
   const visibleMails = getVisibleMails(searchFilteredMails, view);
   const counts = getMailboxCounts(mailbox);
   const primaryLinks = React.useMemo(() => createPrimaryLinks(counts), [counts]);
@@ -89,11 +166,165 @@ export function Mail({
   const selectedMail = getSelectedMail(activeMails, selected);
 
   useSelectedMailSync(activeMails, selected, setSelected);
+  usePendingOpenLatest(
+    activeMails,
+    mailbox,
+    pendingOpenSearchQuery,
+    searchQuery,
+    setCompose,
+    setPendingOpenSearchQuery,
+    setSelected,
+  );
+
+  const appContext = React.useMemo(
+    () => ({
+      account: mailbox?.account ?? null,
+      activeDraft,
+      compose,
+      counts,
+      filters: {
+        query: searchQuery,
+        view,
+      },
+      selectedEmail: selectedMail ? createSelectedMailContext(selectedMail) : null,
+      visibleEmails: visibleMails.map(createCompactMailContext),
+    }),
+    [activeDraft, compose, counts, mailbox?.account, searchQuery, selectedMail, view, visibleMails],
+  );
+
+  useAgentContext({
+    description:
+      "Current mail app state. Use selectedEmail only for selected/current/this email requests.",
+    value: appContext,
+  });
+
+  const openDraftInCompose = React.useCallback(
+    (draft: DraftEmailInput) => {
+      setActiveDraft(draft);
+      setCompose(createComposeStateFromDraft(draft, selectedMail));
+      setComposeNotice("");
+    },
+    [selectedMail],
+  );
+
+  const sendDraft = React.useCallback(
+    async (draft: DraftEmailInput) => {
+      const nextCompose = createComposeStateFromDraft(draft, selectedMail);
+      await sendMailMutation.mutateAsync({
+        body: draft.body,
+        inReplyTo: nextCompose.inReplyTo,
+        subject: draft.subject,
+        threadId: nextCompose.threadId,
+        to: draft.to,
+      });
+      setActiveDraft(null);
+      setCompose(emptyComposeState);
+      setComposeNotice("");
+    },
+    [selectedMail, sendMailMutation],
+  );
+
+  const markDraftDecision = React.useCallback(
+    (draft: DraftEmailInput, decision: DraftEmailDecision) => {
+      setDraftDecisions((current) => ({
+        ...current,
+        [draftDecisionKey(draft)]: decision,
+      }));
+    },
+    [],
+  );
+
+  const applyEmailFilters = React.useCallback((input: EmailFilterInput) => {
+    const nextQuery = createAiSearchQuery(input);
+    const nextView = getAiMailView(input);
+
+    setSearchQuery(nextQuery);
+    setView(nextView);
+    setCompose(emptyComposeState);
+    setComposeNotice("");
+
+    if (input.openLatest) {
+      setPendingOpenSearchQuery(nextQuery);
+      return "I applied the filters and will open the latest matching email when results load.";
+    }
+
+    return nextQuery
+      ? `I filtered the inbox with "${nextQuery}".`
+      : `I switched the inbox to ${nextView}.`;
+  }, []);
+
+  useFrontendTool(
+    {
+      description: selectedMail
+        ? `Draft an email and visibly fill the compose form. Use selected email only when user says selected/current/this email. Selected email is "${selectedMail.subject}" from ${selectedMail.email}. Never send without user approval.`
+        : "Draft an email and visibly fill the compose form. Never send without user approval.",
+      followUp: false,
+      handler: async (input: DraftEmailInput) => {
+        openDraftInCompose(input);
+        setIsAiOpen(true);
+        return `draft_ready: Draft filled in compose for ${input.to} with subject "${input.subject}".`;
+      },
+      name: "draftEmail",
+      parameters: draftEmailParameters,
+      render: (props) => (
+        <DraftEmailPreviewCard
+          {...props}
+          draftDecisions={draftDecisions}
+          onDecision={markDraftDecision}
+          onOpenDraft={openDraftInCompose}
+          onSendDraft={sendDraft}
+        />
+      ),
+    },
+    [draftDecisions, markDraftDecision, openDraftInCompose, selectedMail, sendDraft],
+  );
+
+  useFrontendTool(
+    {
+      description:
+        "Apply Gmail search filters and update the main message list. Set openLatest when the user asks to open the latest/first matching email.",
+      followUp: true,
+      handler: async (input: EmailFilterInput) => applyEmailFilters(input),
+      name: "filterEmail",
+      parameters: filterEmailParameters,
+      render: ({ status }) =>
+        status === "complete" ? null : (
+          <div className="my-2 rounded-md border bg-muted px-3 py-2 text-xs text-muted-foreground">
+            Filtering mail...
+          </div>
+        ),
+    },
+    [applyEmailFilters],
+  );
+
+  async function sendCurrentCompose() {
+    const result = draftEmailParameters.safeParse(compose);
+
+    if (!result.success) {
+      setComposeNotice("To, Subject, and Body are required.");
+      return;
+    }
+
+    try {
+      await sendMailMutation.mutateAsync({
+        body: result.data.body,
+        inReplyTo: compose.inReplyTo,
+        subject: result.data.subject,
+        threadId: compose.threadId,
+        to: result.data.to,
+      });
+      setActiveDraft(null);
+      setCompose(emptyComposeState);
+      setComposeNotice("");
+    } catch {
+      setComposeNotice("Email send failed. Check the toast for details.");
+    }
+  }
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full min-w-0 overflow-hidden">
       <ResizablePanelGroup
-        className="h-full flex-1 items-stretch"
+        className="h-full min-w-0 flex-1 items-stretch"
         defaultLayout={layout}
         onLayoutChanged={persistMailLayout}
         orientation="horizontal"
@@ -128,6 +359,20 @@ export function Mail({
                   Unread
                 </TabsTrigger>
               </TabsList>
+              <button
+                className="ml-2 flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                onClick={() => {
+                  setCompose({
+                    ...emptyComposeState,
+                    open: true,
+                  });
+                  setComposeNotice("");
+                }}
+                type="button"
+              >
+                <Pencil className="size-3.5" />
+                Compose
+              </button>
               <button
                 className="ml-2 flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
                 onClick={() => setIsAiOpen((v) => !v)}
@@ -165,8 +410,16 @@ export function Mail({
           minSize="340px"
         >
           <MailDisplay
+            compose={compose}
+            composeNotice={composeNotice}
             isSending={sendMailMutation.isPending}
             mail={selectedMail}
+            onCloseCompose={() => {
+              setCompose(emptyComposeState);
+              setComposeNotice("");
+            }}
+            onComposeChange={setCompose}
+            onSendCompose={() => void sendCurrentCompose()}
             onSendReply={(mail, body) => {
               sendMailMutation.mutate({
                 body,
@@ -178,7 +431,7 @@ export function Mail({
           />
         </ResizablePanel>
       </ResizablePanelGroup>
-      <AskAIPanel isOpen={isAiOpen} onClose={() => setIsAiOpen(false)} />
+      <AskAIPanel isOpen={isAiOpen} onClose={() => setIsAiOpen(false)} threadId={threadId} />
     </div>
   );
 }
@@ -283,6 +536,45 @@ function useSelectedMailSync(
   }, [activeMails, selected, setSelected]);
 }
 
+function usePendingOpenLatest(
+  activeMails: readonly MailItem[],
+  mailbox: MailboxData | null,
+  pendingOpenSearchQuery: string | null,
+  searchQuery: string,
+  setCompose: React.Dispatch<React.SetStateAction<ComposeState>>,
+  setPendingOpenSearchQuery: React.Dispatch<React.SetStateAction<string | null>>,
+  setSelected: (id: string | null) => void,
+) {
+  React.useEffect(() => {
+    if (!shouldOpenPendingLatest(pendingOpenSearchQuery, searchQuery, mailbox)) {
+      return;
+    }
+
+    const nextSelected = activeMails[0]?.id ?? null;
+    setSelected(nextSelected);
+    setCompose(emptyComposeState);
+    setPendingOpenSearchQuery(null);
+  }, [
+    activeMails,
+    mailbox,
+    pendingOpenSearchQuery,
+    searchQuery,
+    setCompose,
+    setPendingOpenSearchQuery,
+    setSelected,
+  ]);
+}
+
+function shouldOpenPendingLatest(
+  pendingOpenSearchQuery: string | null,
+  searchQuery: string,
+  mailbox: MailboxData | null,
+) {
+  return (
+    Boolean(mailbox) && pendingOpenSearchQuery !== null && pendingOpenSearchQuery === searchQuery
+  );
+}
+
 function getActiveMails(mailbox: MailboxData | null) {
   return mailbox?.messages ?? mails;
 }
@@ -346,6 +638,54 @@ function getReplySubject(subject: string) {
   }
 
   return `Re: ${subject}`;
+}
+
+function createCompactMailContext(mail: MailItem) {
+  return {
+    date: mail.date,
+    email: mail.email,
+    id: mail.id,
+    labels: mail.labels,
+    name: mail.name,
+    read: mail.read,
+    subject: mail.subject,
+    threadId: mail.threadId,
+  };
+}
+
+function createSelectedMailContext(mail: MailItem) {
+  return {
+    ...createCompactMailContext(mail),
+    text: mail.text,
+  };
+}
+
+function createComposeStateFromDraft(draft: DraftEmailInput, selectedMail: MailItem | null) {
+  const replyContext = getReplyContext(draft, selectedMail);
+
+  return {
+    body: draft.body,
+    inReplyTo: replyContext?.inReplyTo,
+    open: true,
+    subject: draft.subject,
+    threadId: replyContext?.threadId,
+    to: draft.to,
+  } satisfies ComposeState;
+}
+
+function getReplyContext(draft: DraftEmailInput, selectedMail: MailItem | null) {
+  if (!selectedMail) {
+    return null;
+  }
+
+  if (draft.to !== selectedMail.email || !draft.subject.toLowerCase().startsWith("re:")) {
+    return null;
+  }
+
+  return {
+    inReplyTo: selectedMail.id,
+    threadId: selectedMail.threadId,
+  };
 }
 
 function persistMailLayout(sizes: MailLayout) {

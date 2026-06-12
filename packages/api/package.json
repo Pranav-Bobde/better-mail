@@ -15,8 +15,12 @@
   },
   "dependencies": {
     "@code-main/env": "workspace:*",
+    "@copilotkit/runtime": "^1.60.0",
+    "@openrouter/ai-sdk-provider": "^2.9.1",
     "@orpc/server": "catalog:",
+    "ai": "^6.0.202",
     "evlog": "^2.18.1",
+    "langsmith": "^0.7.7",
     "next": "catalog:",
     "zod": "catalog:"
   },

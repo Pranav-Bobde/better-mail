@@ -8,6 +8,7 @@ import {
   Reply,
   ReplyAll,
   Trash2,
+  X,
 } from "lucide-react";
 import * as React from "react";
 import type { ReactNode } from "react";
@@ -20,23 +21,48 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@code-main/ui/components/dropdown-menu";
+import { Input } from "@code-main/ui/components/input";
 import { Label } from "@code-main/ui/components/label";
 import { Separator } from "@code-main/ui/components/separator";
 import { Switch } from "@code-main/ui/components/switch";
 import { Textarea } from "@code-main/ui/components/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@code-main/ui/components/tooltip";
 
+import type { ComposeState } from "@/features/mail/components/mail-ai-tools";
 import type { Mail } from "@/features/mail/components/mail-data";
 
 export function MailDisplay({
+  compose,
+  composeNotice,
   isSending,
   mail,
+  onCloseCompose,
+  onComposeChange,
+  onSendCompose,
   onSendReply,
 }: {
+  readonly compose: ComposeState;
+  readonly composeNotice: string;
   readonly isSending: boolean;
   readonly mail: Mail | null;
+  readonly onCloseCompose: () => void;
+  readonly onComposeChange: React.Dispatch<React.SetStateAction<ComposeState>>;
+  readonly onSendCompose: () => void;
   readonly onSendReply: (mail: Mail, body: string) => void;
 }) {
+  if (compose.open) {
+    return (
+      <ComposePanel
+        compose={compose}
+        isSending={isSending}
+        notice={composeNotice}
+        onChange={onComposeChange}
+        onClose={onCloseCompose}
+        onSend={onSendCompose}
+      />
+    );
+  }
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center p-2">
@@ -94,6 +120,91 @@ export function MailDisplay({
         <div className="p-8 text-center text-muted-foreground">No message selected</div>
       )}
     </div>
+  );
+}
+
+function ComposePanel({
+  compose,
+  isSending,
+  notice,
+  onChange,
+  onClose,
+  onSend,
+}: {
+  readonly compose: ComposeState;
+  readonly isSending: boolean;
+  readonly notice: string;
+  readonly onChange: React.Dispatch<React.SetStateAction<ComposeState>>;
+  readonly onClose: () => void;
+  readonly onSend: () => void;
+}) {
+  const canSend = canSendCompose(compose, isSending);
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex h-[52px] shrink-0 items-center gap-2 px-4">
+        <div>
+          <p className="text-sm font-semibold">New message</p>
+          <p className="text-xs text-muted-foreground">Visible compose form</p>
+        </div>
+        <Button className="ml-auto size-7" onClick={onClose} size="icon" variant="ghost">
+          <X className="size-4" />
+          <span className="sr-only">Close compose</span>
+        </Button>
+      </div>
+      <Separator />
+      <form
+        className="flex min-h-0 flex-1 flex-col"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (canSend) {
+            onSend();
+          }
+        }}
+      >
+        <div className="space-y-3 p-4">
+          <Input
+            aria-label="To"
+            onChange={(event) => onChange((current) => ({ ...current, to: event.target.value }))}
+            placeholder="To"
+            value={compose.to}
+          />
+          <Input
+            aria-label="Subject"
+            onChange={(event) =>
+              onChange((current) => ({ ...current, subject: event.target.value }))
+            }
+            placeholder="Subject"
+            value={compose.subject}
+          />
+        </div>
+        <Separator />
+        <div className="min-h-0 flex-1 p-4">
+          <Textarea
+            aria-label="Email body"
+            className="h-full min-h-[280px] resize-none p-4"
+            onChange={(event) => onChange((current) => ({ ...current, body: event.target.value }))}
+            placeholder="Write email"
+            value={compose.body}
+          />
+        </div>
+        {notice ? (
+          <div className="border-t px-4 py-2 text-xs text-destructive">{notice}</div>
+        ) : null}
+        <div className="flex items-center border-t p-4">
+          <Button className="ml-auto" disabled={!canSend} size="sm" type="submit">
+            {isSending ? "Sending..." : "Send"}
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function canSendCompose(compose: ComposeState, isSending: boolean) {
+  return (
+    !isSending &&
+    [compose.to, compose.subject, compose.body].every((value) => value.trim().length > 0)
   );
 }
 

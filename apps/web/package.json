@@ -6,6 +6,7 @@
     "dev": "next dev --port 4000",
     "build": "next build",
     "start": "next start",
+    "test": "tsx --test src/**/*.test.ts",
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
@@ -13,6 +14,7 @@
     "@code-main/auth": "workspace:*",
     "@code-main/env": "workspace:*",
     "@code-main/ui": "workspace:*",
+    "@copilotkit/react-core": "^1.60.0",
     "@orpc/client": "catalog:",
     "@orpc/openapi": "catalog:",
     "@orpc/server": "catalog:",

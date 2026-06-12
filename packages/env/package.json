@@ -5,10 +5,12 @@
   "type": "module",
   "exports": {
     "./server": "./src/server.ts",
+    "./server-schema": "./src/server-schema.ts",
     "./web": "./src/web.ts"
   },
   "scripts": {
-    "check-types": "tsc --noEmit"
+    "check-types": "tsc --noEmit",
+    "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
     "@t3-oss/env-core": "^0.13.1",

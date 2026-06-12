@@ -1,162 +1,304 @@
 "use client";
 
-import { Bot, Send, Sparkles, X } from "lucide-react";
+import { CopilotChat } from "@copilotkit/react-core/v2";
+import { Pencil, Send, Sparkles, X } from "lucide-react";
 import * as React from "react";
 
 import { Button } from "@code-main/ui/components/button";
-import { ScrollArea } from "@code-main/ui/components/scroll-area";
 import { Separator } from "@code-main/ui/components/separator";
-import { Textarea } from "@code-main/ui/components/textarea";
 import { cn } from "@code-main/ui/lib/utils";
 
-type Message = {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-};
+import type { DraftEmailInput } from "@/features/mail/components/mail-ai-tools";
+import { draftEmailParameters } from "@/features/mail/components/mail-ai-tools";
 
-const PLACEHOLDER_RESPONSES = [
-  "I can help you manage your inbox! You have 128 unread messages. Would you like me to summarize the most important ones?",
-  "Based on your email patterns, I notice several threads that may need your attention. The most urgent appears to be from William Howard about a meeting.",
-  "I can draft a reply, search your inbox, or help you organize your emails. What would you like to do?",
-];
+export type DraftEmailDecision = "opened_in_compose" | "sent";
+
+const aiPanelWidth = 360;
+
+export function draftDecisionKey(draft: DraftEmailInput) {
+  return `${draft.to}\n${draft.subject}\n${draft.body}`;
+}
 
 export function AskAIPanel({
   isOpen,
   onClose,
+  threadId,
 }: {
   readonly isOpen: boolean;
   readonly onClose: () => void;
+  readonly threadId: string;
 }) {
-  const [messages, setMessages] = React.useState<Message[]>([
-    {
-      id: "0",
-      role: "assistant",
-      content:
-        "Hi! I'm your AI email assistant. I can help you search emails, draft replies, summarize threads, or answer questions about your inbox.",
-    },
-  ]);
-  const [input, setInput] = React.useState("");
-  const [isTyping, setIsTyping] = React.useState(false);
-  const responseIndex = React.useRef(0);
-  const bottomRef = React.useRef<HTMLDivElement>(null);
-
-  React.useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isTyping]);
-
-  function handleSend() {
-    const trimmed = input.trim();
-    if (!trimmed) return;
-
-    const userMsg: Message = { id: Date.now().toString(), role: "user", content: trimmed };
-    setMessages((prev) => [...prev, userMsg]);
-    setInput("");
-    setIsTyping(true);
-
-    setTimeout(() => {
-      const reply: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        content: PLACEHOLDER_RESPONSES[responseIndex.current % PLACEHOLDER_RESPONSES.length],
-      };
-      responseIndex.current += 1;
-      setIsTyping(false);
-      setMessages((prev) => [...prev, reply]);
-    }, 1200);
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  }
+  const content = isOpen ? <AskAIPanelContent onClose={onClose} threadId={threadId} /> : null;
 
   return (
     <div
-      className={cn(
-        "flex h-full flex-col border-l bg-background transition-all duration-300 ease-in-out",
-        isOpen ? "w-[340px] opacity-100" : "w-0 overflow-hidden opacity-0",
-      )}
+      aria-hidden={!isOpen}
+      className={getAskAIPanelClassName(isOpen)}
+      style={getAskAIPanelStyle(isOpen)}
     >
-      {/* Header */}
+      {content}
+    </div>
+  );
+}
+
+function AskAIPanelContent({
+  onClose,
+  threadId,
+}: {
+  readonly onClose: () => void;
+  readonly threadId: string;
+}) {
+  return (
+    <>
       <div className="flex h-[52px] shrink-0 items-center gap-2 px-4">
         <Sparkles className="size-4 text-muted-foreground" />
         <span className="text-sm font-semibold">Ask AI</span>
         <Button className="ml-auto size-7" onClick={onClose} size="icon" variant="ghost">
           <X className="size-4" />
-          <span className="sr-only">Close</span>
+          <span className="sr-only">Close AI panel</span>
         </Button>
       </div>
       <Separator />
+      <div className="mail-copilot-chat min-h-0 flex-1">
+        <CopilotChat
+          agentId="default"
+          className="h-full"
+          labels={{
+            chatInputPlaceholder: "Ask AI to compose, search, filter, or open mail...",
+            welcomeMessageText:
+              "Ask me to summarize the current email, draft a reply, search mail, or show unread messages.",
+          }}
+          threadId={threadId}
+        />
+      </div>
+    </>
+  );
+}
 
-      {/* Messages */}
-      <ScrollArea className="min-h-0 flex-1 px-4 py-3">
-        <div className="flex flex-col gap-4">
-          {messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={cn("flex gap-2", msg.role === "user" ? "flex-row-reverse" : "flex-row")}
-            >
-              {msg.role === "assistant" && (
-                <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10">
-                  <Bot className="size-3.5 text-primary" />
-                </div>
-              )}
-              <div
-                className={cn(
-                  "max-w-[250px] rounded-2xl px-3 py-2 text-sm leading-relaxed",
-                  msg.role === "user"
-                    ? "rounded-tr-sm bg-primary text-primary-foreground"
-                    : "rounded-tl-sm bg-muted text-foreground",
-                )}
-              >
-                {msg.content}
-              </div>
-            </div>
-          ))}
+function getAskAIPanelClassName(isOpen: boolean) {
+  return cn(
+    "flex h-full flex-col border-l bg-background",
+    isOpen ? "opacity-100" : "overflow-hidden opacity-0",
+  );
+}
 
-          {isTyping && (
-            <div className="flex gap-2">
-              <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10">
-                <Bot className="size-3.5 text-primary" />
-              </div>
-              <div className="flex items-center gap-1 rounded-2xl rounded-tl-sm bg-muted px-3 py-3">
-                <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:0ms]" />
-                <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:150ms]" />
-                <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:300ms]" />
-              </div>
-            </div>
-          )}
+function getAskAIPanelStyle(isOpen: boolean): React.CSSProperties {
+  const width = isOpen ? aiPanelWidth : 0;
+
+  return {
+    flex: `0 0 ${width}px`,
+    width,
+  };
+}
+
+export function DraftEmailPreviewCard({
+  args,
+  draftDecisions,
+  onDecision,
+  onOpenDraft,
+  onSendDraft,
+  status,
+}: {
+  readonly args: Partial<DraftEmailInput>;
+  readonly draftDecisions: Readonly<Record<string, DraftEmailDecision>>;
+  readonly onDecision: (draft: DraftEmailInput, decision: DraftEmailDecision) => void;
+  readonly onOpenDraft: (draft: DraftEmailInput) => void;
+  readonly onSendDraft: (draft: DraftEmailInput) => Promise<void>;
+  readonly result?: string;
+  readonly status: "inProgress" | "executing" | "complete";
+}) {
+  const [error, setError] = React.useState("");
+  const [isSending, setIsSending] = React.useState(false);
+  const preview = createDraftPreviewState(args, draftDecisions, status, isSending);
+
+  function choose(action: DraftEmailDecision) {
+    if (!preview.canChoose || !preview.validDraft) return;
+
+    void runDraftDecision(action, preview.validDraft, {
+      onDecision,
+      onOpenDraft,
+      onSendDraft,
+      setError,
+      setIsSending,
+    }).catch((caught: unknown) => {
+      setError(caught instanceof Error ? caught.message : "Could not complete action.");
+    });
+  }
+
+  return (
+    <>
+      <p className="my-2 text-sm leading-6 text-foreground">{preview.message}</p>
+      <div className="my-3 overflow-hidden rounded-lg border bg-background text-sm shadow-sm">
+        <div className="border-b px-4 py-3">
+          <p className="font-semibold">Draft preview</p>
+          <p className="mt-1 text-xs text-muted-foreground">{preview.statusText}</p>
         </div>
-        <div ref={bottomRef} />
-      </ScrollArea>
-
-      <Separator />
-
-      {/* Input */}
-      <div className="shrink-0 p-3">
-        <div className="flex items-end gap-2 rounded-xl border bg-muted/40 px-3 py-2 focus-within:ring-1 focus-within:ring-ring">
-          <Textarea
-            className="min-h-0 flex-1 resize-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0"
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask about your emails…"
-            rows={1}
-            value={input}
-          />
+        <div className="space-y-3 px-4 py-3">
+          <DraftPreviewField label="To" value={preview.draft.to} />
+          <DraftPreviewField label="Subject" value={preview.draft.subject} />
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground">Body</p>
+            <p className="max-h-48 overflow-y-auto whitespace-pre-wrap leading-6">
+              {preview.draft.body || "(pending)"}
+            </p>
+          </div>
+          {preview.showValidationError ? (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              Draft needs a valid recipient, subject, and body.
+            </p>
+          ) : null}
+          {error ? (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              {error}
+            </p>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-2 border-t px-4 py-3">
           <Button
-            className="size-7 shrink-0"
-            disabled={!input.trim() || isTyping}
-            onClick={handleSend}
-            size="icon"
+            disabled={!preview.canChoose}
+            onClick={() => void choose("opened_in_compose")}
+            size="sm"
           >
-            <Send className="size-3.5" />
-            <span className="sr-only">Send</span>
+            <Pencil className="size-4" />
+            Open
+          </Button>
+          <Button
+            disabled={!preview.canChoose}
+            onClick={() => void choose("sent")}
+            size="sm"
+            variant="outline"
+          >
+            <Send className="size-4" />
+            Send
           </Button>
         </div>
       </div>
+    </>
+  );
+}
+
+type DraftPreviewState = {
+  readonly canChoose: boolean;
+  readonly draft: DraftEmailInput;
+  readonly message: string;
+  readonly showValidationError: boolean;
+  readonly statusText: string;
+  readonly validDraft: DraftEmailInput | null;
+};
+
+type DraftDecisionHandlers = {
+  readonly onDecision: (draft: DraftEmailInput, decision: DraftEmailDecision) => void;
+  readonly onOpenDraft: (draft: DraftEmailInput) => void;
+  readonly onSendDraft: (draft: DraftEmailInput) => Promise<void>;
+  readonly setError: (error: string) => void;
+  readonly setIsSending: (isSending: boolean) => void;
+};
+
+function createDraftPreviewState(
+  args: Partial<DraftEmailInput>,
+  draftDecisions: Readonly<Record<string, DraftEmailDecision>>,
+  status: "inProgress" | "executing" | "complete",
+  isSending: boolean,
+): DraftPreviewState {
+  const validDraft = getValidDraft(args);
+  const decision = getDraftDecision(validDraft, draftDecisions);
+
+  return {
+    canChoose: canChooseDraft(status, validDraft, decision, isSending),
+    draft: validDraft ?? createPendingDraft(args),
+    message: getDraftPreviewMessage(validDraft),
+    showValidationError: !validDraft && status !== "inProgress",
+    statusText: getDraftStatusText(decision, status, validDraft?.to, isSending),
+    validDraft,
+  };
+}
+
+function getValidDraft(args: Partial<DraftEmailInput>) {
+  const parsedDraft = draftEmailParameters.safeParse(args);
+
+  return parsedDraft.success ? parsedDraft.data : null;
+}
+
+function createPendingDraft(args: Partial<DraftEmailInput>) {
+  return {
+    body: args.body ?? "",
+    responseText: args.responseText,
+    subject: args.subject ?? "",
+    to: args.to ?? "",
+  } satisfies DraftEmailInput;
+}
+
+function getDraftDecision(
+  draft: DraftEmailInput | null,
+  draftDecisions: Readonly<Record<string, DraftEmailDecision>>,
+) {
+  return draft ? (draftDecisions[draftDecisionKey(draft)] ?? null) : null;
+}
+
+function getDraftPreviewMessage(draft: DraftEmailInput | null) {
+  if (!draft) return "Working on the draft preview.";
+
+  return draft?.responseText ?? "I drafted this email. Review it before sending.";
+}
+
+function canChooseDraft(
+  status: "inProgress" | "executing" | "complete",
+  draft: DraftEmailInput | null,
+  decision: DraftEmailDecision | null,
+  isSending: boolean,
+) {
+  return status !== "inProgress" && Boolean(draft) && decision === null && !isSending;
+}
+
+async function runDraftDecision(
+  action: DraftEmailDecision,
+  draft: DraftEmailInput,
+  handlers: DraftDecisionHandlers,
+) {
+  handlers.setError("");
+
+  if (action === "opened_in_compose") {
+    handlers.onOpenDraft(draft);
+    handlers.onDecision(draft, action);
+    return;
+  }
+
+  handlers.setIsSending(true);
+  try {
+    await handlers.onSendDraft(draft);
+    handlers.onDecision(draft, action);
+  } finally {
+    handlers.setIsSending(false);
+  }
+}
+
+function DraftPreviewField({ label, value }: { readonly label: string; readonly value: string }) {
+  return (
+    <div>
+      <p className="text-xs font-semibold text-muted-foreground">{label}</p>
+      <p className="break-words">{value || "(pending)"}</p>
     </div>
   );
+}
+
+const draftDecisionStatusText = {
+  opened_in_compose: () => "Opened in compose form.",
+  sent: (to: string | undefined) => `Sent through Gmail to ${to}.`,
+} satisfies Record<DraftEmailDecision, (to: string | undefined) => string>;
+
+const draftToolStatusText = {
+  complete: "Review before sending.",
+  executing: "Review before sending.",
+  inProgress: "Preparing draft...",
+} as const;
+
+function getDraftStatusText(
+  decision: DraftEmailDecision | null,
+  status: "inProgress" | "executing" | "complete",
+  to: string | undefined,
+  isSending: boolean,
+) {
+  if (isSending) return "Sending through Gmail...";
+  if (decision) return draftDecisionStatusText[decision](to);
+  return draftToolStatusText[status];
 }

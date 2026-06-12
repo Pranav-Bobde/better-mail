@@ -29,6 +29,7 @@
   - Zod at boundaries.
   - Small explicit files.
   - Tests for external-service logic with real-shaped mock payloads.
+  - Test/mock values for external services must come from real observed payload shapes, not invented shapes.
 
 - Commands:
   - `pnpm run dev:web`
@@ -45,6 +46,7 @@
 3. If a fix requires a tradeoff that alters current logic, stop and ask first.
 4. Present the impact clearly before changing behavior (what breaks, what improves, proposed default).
 5. Env schema keys should be required by default; make env optional only when the product behavior explicitly supports that fallback.
-6. After every code/config/doc change, run `pnpm run typecheck`, `pnpm run lint`, `pnpm run fmt`, and `pnpm run fallow`; fix failures before review.
-7. Run `pnpm run verify` before final handoff when changes are commit-bound or review-bound.
-8. Always wait for user confirmation before fixing any issue or staging changes.
+6. Add new env vars as required by default; optional env needs a clear fallback reason in code/review notes and the user's approval.
+7. After every code/config/doc change, run `pnpm run typecheck`, `pnpm run lint`, `pnpm run fmt`, and `pnpm run fallow`; fix failures before review.
+8. Run `pnpm run verify` before final handoff when changes are commit-bound or review-bound.
+9. Always wait for user confirmation before fixing any issue or staging changes.

@@ -21,6 +21,12 @@ process.env.GMAIL_OAUTH_REFRESH_TOKEN = "test-gmail-refresh-token";
 process.env.GMAIL_PUBSUB_TOPIC = "projects/sample/topics/mail-push";
 process.env.GMAIL_PUBSUB_VERIFICATION_TOKEN = pushToken;
 process.env.GMAIL_WATCH_LABEL_IDS = "INBOX";
+process.env.OPENROUTER_API_KEY = "sk-or-v1-real-shaped-test";
+process.env.LANGSMITH_API_KEY = "lsv2_pt_real-shaped-test";
+process.env.LANGSMITH_TRACING = "true";
+process.env.LANGSMITH_PROJECT = "ai-email-client";
+process.env.OPENROUTER_MODEL = "openai/gpt-5.4-nano";
+process.env.COPILOTKIT_TELEMETRY_DISABLED = "true";
 process.env.NODE_ENV = "test";
 
 const { handleGmailPushPayload } = await import("./mailbox-service");
