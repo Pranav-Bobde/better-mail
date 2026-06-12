@@ -12,8 +12,11 @@
 
 - Internal API rules: follow `refs/backend_api_spec.md`.
   - Internal app errors return 200 body `{ status: "error", error: string }`.
-  - Non-200 means infra/catastrophic failure only.
+  - Non-2xx means infra/catastrophic failure only.
   - POST-only for internal data actions unless provider/framework endpoint needs otherwise.
+
+- Exception to the backend API non-2xx rule.
+  - `apps/web/src/app/api/gmail/push/route.ts`: provider-webhook exceptions only; allow non-2xx responses for retry control while keeping internal oRPC routes on 200 error-envelope behavior.
 
 - Logging rules: follow `refs/evlog_practices/`.
   - Use evlog wide structured events.
@@ -42,5 +45,6 @@
 3. If a fix requires a tradeoff that alters current logic, stop and ask first.
 4. Present the impact clearly before changing behavior (what breaks, what improves, proposed default).
 5. Env schema keys should be required by default; make env optional only when the product behavior explicitly supports that fallback.
-6. Run the lint, typecheck, and fallow commands after making changes to verify the changes.
-7. Always wait for user confirmation before fixing any issue or staging changes.
+6. After every code/config/doc change, run `pnpm run typecheck`, `pnpm run lint`, `pnpm run fmt`, and `pnpm run fallow`; fix failures before review.
+7. Run `pnpm run verify` before final handoff when changes are commit-bound or review-bound.
+8. Always wait for user confirmation before fixing any issue or staging changes.

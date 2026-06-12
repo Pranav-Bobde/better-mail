@@ -9,6 +9,7 @@ import {
   ReplyAll,
   Trash2,
 } from "lucide-react";
+import * as React from "react";
 import type { ReactNode } from "react";
 
 import { Avatar, AvatarFallback } from "@code-main/ui/components/avatar";
@@ -27,7 +28,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@code-main/ui/component
 
 import type { Mail } from "@/features/mail/components/mail-data";
 
-export function MailDisplay({ mail }: { readonly mail: Mail | null }) {
+export function MailDisplay({
+  isSending,
+  mail,
+  onSendReply,
+}: {
+  readonly isSending: boolean;
+  readonly mail: Mail | null;
+  readonly onSendReply: (mail: Mail, body: string) => void;
+}) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center p-2">
@@ -80,7 +89,7 @@ export function MailDisplay({ mail }: { readonly mail: Mail | null }) {
       </div>
       <Separator />
       {mail ? (
-        <SelectedMail mail={mail} />
+        <SelectedMail isSending={isSending} mail={mail} onSendReply={onSendReply} />
       ) : (
         <div className="p-8 text-center text-muted-foreground">No message selected</div>
       )}
@@ -107,7 +116,22 @@ function ToolButton({
   );
 }
 
-function SelectedMail({ mail }: { readonly mail: Mail }) {
+function SelectedMail({
+  isSending,
+  mail,
+  onSendReply,
+}: {
+  readonly isSending: boolean;
+  readonly mail: Mail;
+  readonly onSendReply: (mail: Mail, body: string) => void;
+}) {
+  const [replyBody, setReplyBody] = React.useState("");
+  const canSend = replyBody.trim().length > 0 && !isSending;
+
+  React.useEffect(() => {
+    setReplyBody("");
+  }, [mail.id]);
+
   return (
     <div className="flex flex-1 flex-col">
       <div className="flex items-start p-4">
@@ -136,14 +160,29 @@ function SelectedMail({ mail }: { readonly mail: Mail }) {
       <div className="flex-1 whitespace-pre-wrap p-4 text-sm">{mail.text}</div>
       <Separator className="mt-auto" />
       <div className="p-4">
-        <form>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+
+            if (canSend) {
+              onSendReply(mail, replyBody.trim());
+              setReplyBody("");
+            }
+          }}
+        >
           <div className="grid gap-4">
-            <Textarea className="p-4" placeholder={`Reply ${mail.name}...`} />
+            <Textarea
+              className="p-4"
+              key={mail.id}
+              onChange={(event) => setReplyBody(event.currentTarget.value)}
+              placeholder={`Reply ${mail.name}...`}
+              value={replyBody}
+            />
             <div className="flex items-center">
               <Label className="flex items-center gap-2 text-xs font-normal" htmlFor="mute">
                 <Switch aria-label="Mute thread" id="mute" /> Mute this thread
               </Label>
-              <Button className="ml-auto" onClick={(event) => event.preventDefault()} size="sm">
+              <Button className="ml-auto" disabled={!canSend} size="sm" type="submit">
                 Send
               </Button>
             </div>

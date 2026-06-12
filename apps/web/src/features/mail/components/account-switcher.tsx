@@ -11,15 +11,44 @@ import {
 } from "@code-main/ui/components/select";
 import { cn } from "@code-main/ui/lib/utils";
 
-import { accounts } from "@/features/mail/components/mail-data";
+import { accounts, GmailIcon } from "@/features/mail/components/mail-data";
 
-export function AccountSwitcher({ isCollapsed }: { readonly isCollapsed: boolean }) {
-  const [selectedAccount, setSelectedAccount] = React.useState(accounts[0].email);
-  const account = accounts.find((item) => item.email === selectedAccount) ?? accounts[0];
+type Account = {
+  readonly email: string;
+  readonly label: string;
+};
+
+export function AccountSwitcher({
+  account,
+  isCollapsed,
+}: {
+  readonly account?: Account;
+  readonly isCollapsed: boolean;
+}) {
+  const accountOptions = React.useMemo(
+    () =>
+      account
+        ? [
+            {
+              ...account,
+              icon: <GmailIcon />,
+            },
+          ]
+        : accounts,
+    [account],
+  );
+  const firstAccount = accountOptions[0];
+  const [selectedAccount, setSelectedAccount] = React.useState(firstAccount.email);
+  const selectedAccountOption =
+    accountOptions.find((item) => item.email === selectedAccount) ?? firstAccount;
+
+  React.useEffect(() => {
+    setSelectedAccount(firstAccount.email);
+  }, [firstAccount]);
 
   return (
     <Select
-      defaultValue={selectedAccount}
+      value={selectedAccount}
       onValueChange={(value) => {
         if (value) {
           setSelectedAccount(value);
@@ -35,12 +64,12 @@ export function AccountSwitcher({ isCollapsed }: { readonly isCollapsed: boolean
         )}
       >
         <SelectValue>
-          {account.icon}
-          <span className={cn("ml-2", isCollapsed && "hidden")}>{account.label}</span>
+          {selectedAccountOption.icon}
+          <span className={cn("ml-2", isCollapsed && "hidden")}>{selectedAccountOption.label}</span>
         </SelectValue>
       </SelectTrigger>
       <SelectContent className="w-56">
-        {accounts.map((item) => (
+        {accountOptions.map((item) => (
           <SelectItem key={item.email} value={item.email}>
             <div className="flex items-center gap-3 [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-foreground">
               {item.icon}

@@ -10,17 +10,12 @@
     }
   },
   "scripts": {
-    "check-types": "tsc --noEmit"
+    "check-types": "tsc --noEmit",
+    "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
-    "@code-main/auth": "workspace:*",
-    "@code-main/db": "workspace:*",
     "@code-main/env": "workspace:*",
-    "@orpc/client": "catalog:",
-    "@orpc/openapi": "catalog:",
     "@orpc/server": "catalog:",
-    "@orpc/zod": "catalog:",
-    "dotenv": "catalog:",
     "evlog": "^2.18.1",
     "next": "catalog:",
     "zod": "catalog:"

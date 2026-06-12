@@ -84,12 +84,7 @@ export function AskAIPanel({
       <div className="flex h-[52px] shrink-0 items-center gap-2 px-4">
         <Sparkles className="size-4 text-muted-foreground" />
         <span className="text-sm font-semibold">Ask AI</span>
-        <Button
-          className="ml-auto size-7"
-          onClick={onClose}
-          size="icon"
-          variant="ghost"
-        >
+        <Button className="ml-auto size-7" onClick={onClose} size="icon" variant="ghost">
           <X className="size-4" />
           <span className="sr-only">Close</span>
         </Button>
@@ -102,10 +97,7 @@ export function AskAIPanel({
           {messages.map((msg) => (
             <div
               key={msg.id}
-              className={cn(
-                "flex gap-2",
-                msg.role === "user" ? "flex-row-reverse" : "flex-row",
-              )}
+              className={cn("flex gap-2", msg.role === "user" ? "flex-row-reverse" : "flex-row")}
             >
               {msg.role === "assistant" && (
                 <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10">

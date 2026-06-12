@@ -8,7 +8,7 @@ export const o = os.$context<Context>();
 export const publicProcedure = o.use(evlog<Context>());
 
 const requireAuth = o.middleware(async ({ context, next }) => {
-  if (!context.session?.user) {
+  if (!context.session) {
     throw new ORPCError("UNAUTHORIZED");
   }
   return next({

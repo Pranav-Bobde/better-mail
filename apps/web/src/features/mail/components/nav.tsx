@@ -7,7 +7,7 @@ import { buttonVariants } from "@code-main/ui/components/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@code-main/ui/components/tooltip";
 import { cn } from "@code-main/ui/lib/utils";
 
-type NavLink = {
+export type NavLink = {
   readonly title: string;
   readonly label?: string;
   readonly icon: LucideIcon;

@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "turbo dev",
     "build": "turbo build",
+    "test": "turbo test",
     "type": "pnpm run typecheck",
     "typecheck": "turbo check-types",
     "check-types": "turbo check-types",
@@ -17,7 +18,7 @@
     "fmt": "oxfmt --check . '!refs/**/*.md'",
     "fmt:fix": "oxfmt --write . '!refs/**/*.md'",
     "format": "oxfmt --write",
-    "verify": "pnpm run typecheck && pnpm run lint && pnpm run fmt && pnpm run fallow && pnpm run build",
+    "verify": "pnpm run test && pnpm run typecheck && pnpm run lint && pnpm run fmt && pnpm run fallow && pnpm run build",
     "dev:web": "turbo -F web dev",
     "db:push": "turbo -F @code-main/db db:push",
     "db:studio": "turbo -F @code-main/db db:studio",
@@ -25,9 +26,7 @@
     "db:migrate": "turbo -F @code-main/db db:migrate"
   },
   "dependencies": {
-    "@code-main/env": "workspace:*",
-    "dotenv": "catalog:",
-    "zod": "catalog:"
+    "@code-main/env": "workspace:*"
   },
   "devDependencies": {
     "@code-main/config": "workspace:*",
@@ -42,6 +41,7 @@
     "globals": "^17.6.0",
     "oxfmt": "^0.54.0",
     "oxlint": "^1.69.0",
+    "tsx": "^4.22.4",
     "turbo": "^2.9.16",
     "typescript": "catalog:",
     "typescript-eslint": "^8.61.0"

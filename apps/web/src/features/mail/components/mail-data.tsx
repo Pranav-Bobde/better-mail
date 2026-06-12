@@ -1,3 +1,6 @@
+import type { MailMessage } from "@code-main/api/mail/contracts";
+import type { ReactNode } from "react";
+
 export const mails = [
   {
     id: "6c84fb90-12c4-11e1-840d-7b25c5ee775a",
@@ -8,6 +11,7 @@ export const mails = [
     date: "2023-10-22T09:00:00",
     read: true,
     labels: ["meeting", "work", "important"],
+    threadId: "6c84fb90-12c4-11e1-840d-7b25c5ee775a",
   },
   {
     id: "110e8400-e29b-11d4-a716-446655440000",
@@ -18,6 +22,7 @@ export const mails = [
     date: "2023-10-22T10:30:00",
     read: true,
     labels: ["work", "important"],
+    threadId: "110e8400-e29b-11d4-a716-446655440000",
   },
   {
     id: "3e7c3f6d-bdf5-46ae-8d90-171300f27ae2",
@@ -28,6 +33,7 @@ export const mails = [
     date: "2023-04-10T11:45:00",
     read: true,
     labels: ["personal"],
+    threadId: "3e7c3f6d-bdf5-46ae-8d90-171300f27ae2",
   },
   {
     id: "61c35085-72d7-42b4-8d62-738f700d4b92",
@@ -38,6 +44,7 @@ export const mails = [
     date: "2023-03-25T13:15:00",
     read: false,
     labels: ["work", "budget"],
+    threadId: "61c35085-72d7-42b4-8d62-738f700d4b92",
   },
   {
     id: "8f7b5db9-d935-4e42-8e05-1f1d0a3dfb97",
@@ -48,6 +55,7 @@ export const mails = [
     date: "2023-03-10T15:00:00",
     read: false,
     labels: ["meeting", "work", "important"],
+    threadId: "8f7b5db9-d935-4e42-8e05-1f1d0a3dfb97",
   },
   {
     id: "1f0f2c02-e299-40de-9b1d-86ef9e42126b",
@@ -58,6 +66,7 @@ export const mails = [
     date: "2023-02-15T16:30:00",
     read: true,
     labels: ["work"],
+    threadId: "1f0f2c02-e299-40de-9b1d-86ef9e42126b",
   },
   {
     id: "17c0a96d-4415-42b1-8b4f-764efab57f66",
@@ -68,19 +77,11 @@ export const mails = [
     date: "2023-01-28T17:45:00",
     read: false,
     labels: ["meeting", "work", "important"],
+    threadId: "17c0a96d-4415-42b1-8b4f-764efab57f66",
   },
-] satisfies readonly {
-  readonly id: string;
-  readonly name: string;
-  readonly email: string;
-  readonly subject: string;
-  readonly text: string;
-  readonly date: string;
-  readonly read: boolean;
-  readonly labels: readonly string[];
-}[];
+] satisfies readonly MailMessage[];
 
-export type Mail = (typeof mails)[number];
+export type Mail = MailMessage;
 
 export const accounts = [
   {
@@ -93,9 +94,20 @@ export const accounts = [
     email: "alicia@gmail.com",
     icon: <GmailIcon />,
   },
+] satisfies readonly [
+  {
+    readonly email: string;
+    readonly icon: ReactNode;
+    readonly label: string;
+  },
+  ...{
+    readonly email: string;
+    readonly icon: ReactNode;
+    readonly label: string;
+  }[],
 ];
 
-function GmailIcon() {
+export function GmailIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
       <path

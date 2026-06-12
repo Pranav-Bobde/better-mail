@@ -1,16 +1,19 @@
-import { auth } from "@code-main/auth";
 import type { EvlogOrpcContext } from "evlog/orpc";
 import type { NextRequest } from "next/server";
 
-export async function createContext(req: NextRequest) {
-  const session = await auth.api.getSession({
-    headers: req.headers,
-  });
+export async function createContext(_req: NextRequest) {
   return {
     auth: null,
-    session,
+    session: null,
   };
 }
 
 export type BaseContext = Awaited<ReturnType<typeof createContext>>;
-export type Context = BaseContext & Partial<EvlogOrpcContext>;
+export type Context = BaseContext & EvlogOrpcContext;
+
+export async function createRpcContext(req: NextRequest, log: EvlogOrpcContext["log"]) {
+  return {
+    ...(await createContext(req)),
+    log,
+  } satisfies Context;
+}

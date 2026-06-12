@@ -1,4 +1,4 @@
-import { createContext } from "@code-main/api/context";
+import { createRpcContext } from "@code-main/api/context";
 import { rpcErrors, type RpcErrorCode } from "@code-main/api/observability/rpc/errors";
 import {
   createRpcErrorFields,
@@ -36,10 +36,7 @@ async function handleRequest(req: NextRequest) {
   try {
     const rpcResult = await rpcHandler.handle(req, {
       prefix: "/api/rpc",
-      context: {
-        ...(await createContext(req)),
-        log,
-      },
+      context: await createRpcContext(req, log),
     });
     if (rpcResult.response) return rpcResult.response;
   } catch (error) {
@@ -54,7 +51,7 @@ async function handleApiReferenceRequest(req: NextRequest) {
   const log = useLogger<RpcWideEventFields>();
   const apiResult = await apiHandler.handle(req, {
     prefix: "/api/rpc/api-reference",
-    context: await createContext(req),
+    context: await createRpcContext(req, log),
   });
   if (apiResult.response) {
     log.set(createRpcSuccessFields("apiReference"));
