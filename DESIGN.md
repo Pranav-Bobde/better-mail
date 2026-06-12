@@ -281,6 +281,32 @@ Expected patterns:
 - Do not add heavy shadows or high-radius surfaces.
 - Do not add visible instructional text explaining how to use the UI.
 
+## AI Assistant Panel (Ask AI)
+
+The right-side `Ask AI` panel wraps CopilotKit's `CopilotChat`, themed to the
+shadcn token system. It must read as part of the same dark-first product surface,
+not a third-party widget.
+
+- Panel header: `h-[52px]`, sparkles icon (`text-foreground`) + `Ask AI` label,
+  ghost close button. Matches the message-detail and compose headers.
+- Chat input: a single rounded, bordered, slightly elevated card
+  (`0.75rem` radius, `border-border`, `bg-background`, subtle shadow) with margin
+  around it — not flush to the panel edges. Focus shows a `ring`-colored outline,
+  mirroring shadcn inputs. The send button is muted until text is present, then
+  takes `bg-primary`.
+- Messages: user turns use a compact `bg-muted` rounded bubble aligned right;
+  assistant turns are flat (transparent, no bubble) for readability.
+- Empty state: a centered, custom welcome (`How can I help?`) with up to four
+  suggestion chips (`icon + label`, bordered, `hover:bg-accent`). Chips prefill
+  the input; they never auto-send. The state is gated on the agent having zero
+  messages and disappears once a turn exists.
+- Draft preview: a flat bordered card (`rounded-lg`, `bg-muted/30`) with
+  `To`/`Subject`/`Body` fields and `Open` (primary) / `Send` (outline) actions.
+  No nested cards, no heavy elevation.
+
+CopilotKit overrides live in `apps/web/src/index.css` under `.mail-copilot-chat`.
+Keep overrides scoped to that class and prefer semantic tokens over hardcoded hues.
+
 ## QA Checklist
 
 Before calling a UI change done:

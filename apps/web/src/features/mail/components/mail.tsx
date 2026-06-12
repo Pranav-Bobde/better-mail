@@ -13,6 +13,7 @@ import {
   ArchiveX,
   File,
   Inbox,
+  Loader2,
   MessagesSquare,
   Pencil,
   Search,
@@ -25,6 +26,7 @@ import {
 import * as React from "react";
 import { toast } from "sonner";
 
+import { Button } from "@code-main/ui/components/button";
 import { Input } from "@code-main/ui/components/input";
 import {
   ResizableHandle,
@@ -34,7 +36,7 @@ import {
 import { Separator } from "@code-main/ui/components/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@code-main/ui/components/tabs";
 import { cn } from "@code-main/ui/lib/utils";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { AccountSwitcher } from "@/features/mail/components/account-switcher";
 import {
@@ -144,6 +146,7 @@ function MailWorkspace({
   const [isCollapsed, setIsCollapsed] = React.useState(defaultCollapsed);
   const [selected, setSelected] = React.useState<MailItem["id"] | null>(mails[0].id);
   const [isAiOpen, setIsAiOpen] = React.useState(false);
+  const [searchInput, setSearchInput] = React.useState("");
   const [searchQuery, setSearchQuery] = React.useState("");
   const [view, setView] = React.useState<MailView>("all");
   const [compose, setCompose] = React.useState<ComposeState>(emptyComposeState);
@@ -154,7 +157,7 @@ function MailWorkspace({
   );
   const [pendingOpenSearchQuery, setPendingOpenSearchQuery] = React.useState<string | null>(null);
   const layout = createMailLayout(defaultLayout);
-  const mailbox = useMailboxData(searchQuery, view);
+  const { mailbox, isFetching: isMailboxFetching } = useMailboxData(searchQuery, view);
   const sendMailMutation = useSendReplyMutation();
   const activeMails = getActiveMails(mailbox);
   const clientSearchQuery = getClientMailSearchQuery(searchQuery, mailbox !== null);
@@ -164,6 +167,19 @@ function MailWorkspace({
   const primaryLinks = React.useMemo(() => createPrimaryLinks(counts), [counts]);
   const categoryLinks = React.useMemo(() => createCategoryLinks(counts), [counts]);
   const selectedMail = getSelectedMail(activeMails, selected);
+  const openCompose = React.useCallback(() => {
+    setCompose({
+      ...emptyComposeState,
+      open: true,
+    });
+    setComposeNotice("");
+  }, []);
+  const closeCompose = React.useCallback(() => {
+    setCompose(emptyComposeState);
+    setComposeNotice("");
+  }, []);
+  const toggleAiPanel = React.useCallback(() => setIsAiOpen((value) => !value), []);
+  const closeAiPanel = React.useCallback(() => setIsAiOpen(false), []);
 
   useSelectedMailSync(activeMails, selected, setSelected);
   usePendingOpenLatest(
@@ -175,6 +191,12 @@ function MailWorkspace({
     setPendingOpenSearchQuery,
     setSelected,
   );
+
+  // Keep the search field in sync when the committed query changes from outside
+  // the field (e.g. the AI applies a filter). Typing only updates searchInput.
+  React.useEffect(() => {
+    setSearchInput(searchQuery);
+  }, [searchQuery]);
 
   const appContext = React.useMemo(
     () => ({
@@ -197,6 +219,15 @@ function MailWorkspace({
       "Current mail app state. Use selectedEmail only for selected/current/this email requests.",
     value: appContext,
   });
+
+  // Opening a message must dismiss the compose form — otherwise the compose
+  // panel stays mounted over the detail pane and the clicked email appears to do
+  // nothing (it opens "behind" compose).
+  const handleSelectMail = React.useCallback((id: MailItem["id"] | null) => {
+    setSelected(id);
+    setCompose(emptyComposeState);
+    setComposeNotice("");
+  }, []);
 
   const openDraftInCompose = React.useCallback(
     (draft: DraftEmailInput) => {
@@ -256,13 +287,13 @@ function MailWorkspace({
   useFrontendTool(
     {
       description: selectedMail
-        ? `Draft an email and visibly fill the compose form. Use selected email only when user says selected/current/this email. Selected email is "${selectedMail.subject}" from ${selectedMail.email}. Never send without user approval.`
-        : "Draft an email and visibly fill the compose form. Never send without user approval.",
+        ? `Draft an email and show a review preview in the Ask AI panel. Use selected email only when user says selected/current/this email. Selected email is "${selectedMail.subject}" from ${selectedMail.email}. Do not open the compose form or send — the user opens or sends from the preview.`
+        : "Draft an email and show a review preview in the Ask AI panel. Do not open the compose form or send — the user opens or sends from the preview.",
       followUp: false,
       handler: async (input: DraftEmailInput) => {
-        openDraftInCompose(input);
+        setActiveDraft(input);
         setIsAiOpen(true);
-        return `draft_ready: Draft filled in compose for ${input.to} with subject "${input.subject}".`;
+        return `draft_ready: Draft preview ready for ${input.to} with subject "${input.subject}". Awaiting user review.`;
       },
       name: "draftEmail",
       parameters: draftEmailParameters,
@@ -289,7 +320,8 @@ function MailWorkspace({
       parameters: filterEmailParameters,
       render: ({ status }) =>
         status === "complete" ? null : (
-          <div className="my-2 rounded-md border bg-muted px-3 py-2 text-xs text-muted-foreground">
+          <div className="my-1 flex items-center gap-2 rounded-md border bg-muted px-3 py-2 text-xs text-muted-foreground">
+            <span className="inline-block size-1.5 animate-pulse rounded-full bg-muted-foreground/60" />
             Filtering mail...
           </div>
         ),
@@ -339,70 +371,22 @@ function MailWorkspace({
           categoryLinks={categoryLinks}
         />
         <ResizableHandle withHandle />
-        <ResizablePanel
-          defaultSize={toPercent(layout[mailPanelIds.list])}
-          id={mailPanelIds.list}
-          minSize="30%"
-        >
-          <Tabs
-            className="flex h-full min-h-0 flex-col"
-            onValueChange={(value) => setView(toMailView(value))}
-            value={view}
-          >
-            <div className="flex items-center px-4 py-2">
-              <h1 className="text-xl font-bold">Inbox</h1>
-              <TabsList className="ml-auto">
-                <TabsTrigger className="text-zinc-600 dark:text-zinc-200" value="all">
-                  All mail
-                </TabsTrigger>
-                <TabsTrigger className="text-zinc-600 dark:text-zinc-200" value="unread">
-                  Unread
-                </TabsTrigger>
-              </TabsList>
-              <button
-                className="ml-2 flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
-                onClick={() => {
-                  setCompose({
-                    ...emptyComposeState,
-                    open: true,
-                  });
-                  setComposeNotice("");
-                }}
-                type="button"
-              >
-                <Pencil className="size-3.5" />
-                Compose
-              </button>
-              <button
-                className="ml-2 flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
-                onClick={() => setIsAiOpen((v) => !v)}
-                type="button"
-              >
-                <Sparkles className="size-3.5" />
-                Ask AI
-              </button>
-            </div>
-            <Separator />
-            <div className="bg-background/95 p-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-              <div className="relative">
-                <Search className="absolute top-2.5 left-2 size-4 text-muted-foreground" />
-                <Input
-                  aria-label="Search mail"
-                  className="pl-8"
-                  onChange={(event) => setSearchQuery(event.currentTarget.value)}
-                  placeholder="Search"
-                  value={searchQuery}
-                />
-              </div>
-            </div>
-            <TabsContent className="m-0 min-h-0 flex-1" value="all">
-              <MailList items={searchFilteredMails} onSelect={setSelected} selected={selected} />
-            </TabsContent>
-            <TabsContent className="m-0 min-h-0 flex-1" value="unread">
-              <MailList items={visibleMails} onSelect={setSelected} selected={selected} />
-            </TabsContent>
-          </Tabs>
-        </ResizablePanel>
+        <MailListPanel
+          defaultSize={layout[mailPanelIds.list]}
+          isAiOpen={isAiOpen}
+          isMailboxFetching={isMailboxFetching}
+          onOpenCompose={openCompose}
+          onSearchInputChange={setSearchInput}
+          onSearchQueryChange={setSearchQuery}
+          onSelectMail={handleSelectMail}
+          onToggleAiPanel={toggleAiPanel}
+          onViewChange={setView}
+          searchFilteredMails={searchFilteredMails}
+          searchInput={searchInput}
+          selected={selected}
+          view={view}
+          visibleMails={visibleMails}
+        />
         <ResizableHandle withHandle />
         <ResizablePanel
           defaultSize={toPercent(layout[mailPanelIds.detail])}
@@ -414,10 +398,7 @@ function MailWorkspace({
             composeNotice={composeNotice}
             isSending={sendMailMutation.isPending}
             mail={selectedMail}
-            onCloseCompose={() => {
-              setCompose(emptyComposeState);
-              setComposeNotice("");
-            }}
+            onCloseCompose={closeCompose}
             onComposeChange={setCompose}
             onSendCompose={() => void sendCurrentCompose()}
             onSendReply={(mail, body) => {
@@ -431,7 +412,146 @@ function MailWorkspace({
           />
         </ResizablePanel>
       </ResizablePanelGroup>
-      <AskAIPanel isOpen={isAiOpen} onClose={() => setIsAiOpen(false)} threadId={threadId} />
+      <AskAIPanel isOpen={isAiOpen} onClose={closeAiPanel} threadId={threadId} />
+    </div>
+  );
+}
+
+function MailListPanel({
+  defaultSize,
+  isAiOpen,
+  isMailboxFetching,
+  onOpenCompose,
+  onSearchInputChange,
+  onSearchQueryChange,
+  onSelectMail,
+  onToggleAiPanel,
+  onViewChange,
+  searchFilteredMails,
+  searchInput,
+  selected,
+  view,
+  visibleMails,
+}: {
+  readonly defaultSize: number | undefined;
+  readonly isAiOpen: boolean;
+  readonly isMailboxFetching: boolean;
+  readonly onOpenCompose: () => void;
+  readonly onSearchInputChange: (value: string) => void;
+  readonly onSearchQueryChange: (value: string) => void;
+  readonly onSelectMail: (id: MailItem["id"] | null) => void;
+  readonly onToggleAiPanel: () => void;
+  readonly onViewChange: (view: MailView) => void;
+  readonly searchFilteredMails: readonly MailItem[];
+  readonly searchInput: string;
+  readonly selected: MailItem["id"] | null;
+  readonly view: MailView;
+  readonly visibleMails: readonly MailItem[];
+}) {
+  return (
+    <ResizablePanel defaultSize={toPercent(defaultSize ?? 32)} id={mailPanelIds.list} minSize="30%">
+      <Tabs
+        className="flex h-full min-h-0 flex-col"
+        onValueChange={(value) => onViewChange(toMailView(value))}
+        value={view}
+      >
+        <MailListHeader
+          isAiOpen={isAiOpen}
+          onOpenCompose={onOpenCompose}
+          onToggleAiPanel={onToggleAiPanel}
+        />
+        <Separator />
+        <MailSearchBox
+          isMailboxFetching={isMailboxFetching}
+          onSearchInputChange={onSearchInputChange}
+          onSearchQueryChange={onSearchQueryChange}
+          searchInput={searchInput}
+        />
+        <TabsContent className="m-0 min-h-0 flex-1" value="all">
+          <MailList items={searchFilteredMails} onSelect={onSelectMail} selected={selected} />
+        </TabsContent>
+        <TabsContent className="m-0 min-h-0 flex-1" value="unread">
+          <MailList items={visibleMails} onSelect={onSelectMail} selected={selected} />
+        </TabsContent>
+      </Tabs>
+    </ResizablePanel>
+  );
+}
+
+function MailListHeader({
+  isAiOpen,
+  onOpenCompose,
+  onToggleAiPanel,
+}: {
+  readonly isAiOpen: boolean;
+  readonly onOpenCompose: () => void;
+  readonly onToggleAiPanel: () => void;
+}) {
+  return (
+    <div className="flex items-center px-4 py-2">
+      <h1 className="text-xl font-bold">Inbox</h1>
+      <TabsList className="ml-auto">
+        <TabsTrigger className="text-zinc-600 dark:text-zinc-200" value="all">
+          All mail
+        </TabsTrigger>
+        <TabsTrigger className="text-zinc-600 dark:text-zinc-200" value="unread">
+          Unread
+        </TabsTrigger>
+      </TabsList>
+      <Button
+        className="ml-2 h-7 gap-1.5 px-2.5 text-xs"
+        onClick={onOpenCompose}
+        size="sm"
+        variant="outline"
+      >
+        <Pencil className="size-3.5" />
+        Compose
+      </Button>
+      <Button
+        className={cn("ml-2 h-7 gap-1.5 px-2.5 text-xs", isAiOpen && "bg-muted text-foreground")}
+        onClick={onToggleAiPanel}
+        size="sm"
+        variant="outline"
+      >
+        <Sparkles className="size-3.5" />
+        Ask AI
+      </Button>
+    </div>
+  );
+}
+
+function MailSearchBox({
+  isMailboxFetching,
+  onSearchInputChange,
+  onSearchQueryChange,
+  searchInput,
+}: {
+  readonly isMailboxFetching: boolean;
+  readonly onSearchInputChange: (value: string) => void;
+  readonly onSearchQueryChange: (value: string) => void;
+  readonly searchInput: string;
+}) {
+  return (
+    <div className="bg-background/95 p-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      <div className="relative">
+        <Search className="absolute top-2.5 left-2 size-4 text-muted-foreground" />
+        <Input
+          aria-label="Search mail"
+          className="pl-8"
+          onChange={(event) => onSearchInputChange(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              onSearchQueryChange(searchInput.trim());
+            }
+          }}
+          placeholder="Search mail"
+          value={searchInput}
+        />
+        {isMailboxFetching ? (
+          <Loader2 className="absolute top-2.5 right-2 size-4 animate-spin text-muted-foreground" />
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -476,8 +596,8 @@ function MailSidebarPanel({
       <Nav isCollapsed={isCollapsed} links={primaryLinks} />
       <Separator />
       <Nav isCollapsed={isCollapsed} links={categoryLinks} />
-      <div className="mt-auto flex justify-center p-2">
-        <ModeToggle />
+      <div className={cn("mt-auto p-2", isCollapsed && "flex justify-center")}>
+        <ModeToggle isCollapsed={isCollapsed} />
       </div>
     </ResizablePanel>
   );
@@ -497,13 +617,21 @@ function useMailboxData(searchQuery: string, view: MailView) {
       meta: {
         silentError: true,
       },
+      // Keep the previous (real) results visible while a new query loads so the
+      // list never flashes back to fallback/demo data during search.
+      placeholderData: keepPreviousData,
       refetchInterval: (query) => (query.state.data?.status === "ok" ? 10_000 : false),
       retry: false,
       staleTime: 5_000,
     }),
   );
 
-  return mailboxQuery.data?.status === "ok" ? mailboxQuery.data.data : null;
+  const mailbox = mailboxQuery.data?.status === "ok" ? mailboxQuery.data.data : null;
+
+  return {
+    isFetching: mailboxQuery.isFetching,
+    mailbox,
+  };
 }
 
 function useSendReplyMutation() {
@@ -695,7 +823,7 @@ function persistMailLayout(sizes: MailLayout) {
 }
 
 function sidebarHeaderClassName(isCollapsed: boolean) {
-  return cn("flex h-[52px] items-center justify-center", !isCollapsed && "px-2");
+  return cn("flex h-[52px] items-center", isCollapsed ? "justify-center" : "px-2");
 }
 
 function toPercent(size: number) {

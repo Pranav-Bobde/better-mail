@@ -20,10 +20,14 @@ export const startWatchInputSchema = z.object({});
 const mailMessageSchema = z.object({
   date: z.string(),
   email: z.email(),
+  // Raw HTML body when the message has one; omitted for plain-text-only mail.
+  html: z.string().optional(),
   id: z.string(),
   labels: z.array(z.string()),
   name: z.string(),
   read: z.boolean(),
+  // Clean, plain-text preview from Gmail used for the message list.
+  snippet: z.string().optional(),
   subject: z.string(),
   text: z.string(),
   threadId: z.string(),

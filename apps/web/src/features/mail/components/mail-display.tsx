@@ -1,9 +1,12 @@
+import DOMPurify from "dompurify";
 import { format } from "date-fns";
 import {
   Archive,
   ArchiveX,
   Clock,
+  ExternalLink,
   Forward,
+  MailX,
   MoreVertical,
   Reply,
   ReplyAll,
@@ -64,8 +67,8 @@ export function MailDisplay({
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center p-2">
+    <div className="flex h-full min-w-0 flex-col">
+      <div className="flex items-center overflow-x-auto p-2">
         <div className="flex items-center gap-1">
           <ToolButton disabled={!mail} label="Archive">
             <Archive className="size-4" />
@@ -143,10 +146,7 @@ function ComposePanel({
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-[52px] shrink-0 items-center gap-2 px-4">
-        <div>
-          <p className="text-sm font-semibold">New message</p>
-          <p className="text-xs text-muted-foreground">Visible compose form</p>
-        </div>
+        <p className="text-sm font-semibold">New message</p>
         <Button className="ml-auto size-7" onClick={onClose} size="icon" variant="ghost">
           <X className="size-4" />
           <span className="sr-only">Close compose</span>
@@ -268,7 +268,9 @@ function SelectedMail({
         </div>
       </div>
       <Separator />
-      <div className="flex-1 whitespace-pre-wrap p-4 text-sm">{mail.text}</div>
+      <div className="min-h-0 flex-1">
+        <EmailBody mail={mail} />
+      </div>
       <Separator className="mt-auto" />
       <div className="p-4">
         <form
@@ -302,4 +304,198 @@ function SelectedMail({
       </div>
     </div>
   );
+}
+
+function EmailBody({ mail }: { readonly mail: Mail }) {
+  const html = mail.html?.trim();
+
+  if (html) {
+    return <EmailHtmlFrame html={html} />;
+  }
+
+  // Delivery Status Notifications (bounces) carry no HTML — only a
+  // machine-readable delivery-status report. Render a friendly card from it,
+  // the way Gmail synthesizes its "Address not found" card.
+  const bounce = parseBounceNotice(mail.text);
+
+  if (bounce) {
+    return <BounceNotice bounce={bounce} />;
+  }
+
+  return <div className="h-full overflow-y-auto p-4 text-sm whitespace-pre-wrap">{mail.text}</div>;
+}
+
+type BounceNoticeInfo = {
+  readonly diagnostic: string;
+  readonly learnMoreUrl: string | null;
+  readonly reason: string;
+  readonly recipient: string;
+  readonly status: string;
+  readonly title: string;
+};
+
+const bounceReasonByStatus: Readonly<Record<string, { title: string; reason: string }>> = {
+  "5.1.1": {
+    reason: "the address couldn’t be found or is unable to receive mail",
+    title: "Address not found",
+  },
+  "5.1.3": {
+    reason: "the address couldn’t be found or is unable to receive mail",
+    title: "Address not found",
+  },
+  "5.2.1": {
+    reason: "the mailbox is disabled or not accepting messages",
+    title: "Mailbox unavailable",
+  },
+  "5.2.2": { reason: "the recipient’s mailbox is full", title: "Mailbox full" },
+  "5.4.1": {
+    reason: "the recipient’s server didn’t accept the message",
+    title: "Address not found",
+  },
+};
+
+function parseBounceNotice(text: string): BounceNoticeInfo | null {
+  const recipient = getBounceRecipient(text);
+  const status = getBounceStatus(text);
+
+  if (!recipient || !status) {
+    return null;
+  }
+
+  const diagnosticRaw = getBounceDiagnosticRaw(text);
+  const descriptor = getBounceDescriptor(status);
+
+  return {
+    diagnostic: cleanBounceDiagnostic(diagnosticRaw),
+    learnMoreUrl: getBounceLearnMoreUrl(diagnosticRaw),
+    reason: descriptor.reason,
+    recipient,
+    status,
+    title: descriptor.title,
+  };
+}
+
+function getBounceRecipient(text: string) {
+  return text.match(/Final-Recipient:\s*[^;\r\n]*;\s*([^\s\r\n]+)/i)?.[1];
+}
+
+function getBounceStatus(text: string) {
+  return text.match(/Status:\s*([\d.]+)/i)?.[1];
+}
+
+function getBounceDiagnosticRaw(text: string) {
+  return (
+    text
+      .match(/Diagnostic-Code:\s*[^;\r\n]*;\s*([\s\S]*?)(?:\r?\n[A-Za-z-]+:\s|$)/i)?.[1]
+      ?.replace(/\s+/g, " ")
+      .trim() ?? ""
+  );
+}
+
+function getBounceLearnMoreUrl(diagnosticRaw: string) {
+  return diagnosticRaw.match(/https?:\/\/\S+/)?.[0] ?? null;
+}
+
+function cleanBounceDiagnostic(diagnosticRaw: string) {
+  return diagnosticRaw
+    .replace(/\s*For more information,?\s*go to\s*https?:\/\/\S+/i, "")
+    .replace(/https?:\/\/\S+/, "")
+    .trim();
+}
+
+function getBounceDescriptor(status: string) {
+  return bounceReasonByStatus[status] ?? getDefaultBounceDescriptor(status);
+}
+
+function getDefaultBounceDescriptor(status: string) {
+  if (status.startsWith("4")) {
+    return { reason: "the server was temporarily unable to deliver it", title: "Delivery delayed" };
+  }
+
+  return { reason: "of a delivery error", title: "Message not delivered" };
+}
+
+function BounceNotice({ bounce }: { readonly bounce: BounceNoticeInfo }) {
+  return (
+    <div className="h-full overflow-y-auto p-4">
+      <div className="rounded-lg border bg-muted/30 p-4">
+        <div className="flex items-start gap-3">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-amber-500/15 text-amber-600 dark:text-amber-500">
+            <MailX className="size-5" />
+          </div>
+          <div className="min-w-0 space-y-1">
+            <p className="font-semibold">{bounce.title}</p>
+            <p className="text-sm text-muted-foreground">
+              Your message wasn’t delivered to{" "}
+              <span className="font-medium break-all text-foreground">{bounce.recipient}</span>{" "}
+              because {bounce.reason}.
+            </p>
+          </div>
+        </div>
+        {bounce.diagnostic ? (
+          <p className="mt-3 border-t pt-3 text-xs leading-relaxed text-muted-foreground">
+            {bounce.diagnostic}
+          </p>
+        ) : null}
+        {bounce.learnMoreUrl ? (
+          <a
+            className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+            href={bounce.learnMoreUrl}
+            rel="noreferrer noopener"
+            target="_blank"
+          >
+            Learn more
+            <ExternalLink className="size-3.5" />
+          </a>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function EmailHtmlFrame({ html }: { readonly html: string }) {
+  const [srcDoc, setSrcDoc] = React.useState("");
+
+  React.useEffect(() => {
+    setSrcDoc(buildEmailSrcDoc(html));
+  }, [html]);
+
+  return (
+    <iframe
+      className="size-full bg-white"
+      // No `allow-scripts`, so no script in the email can ever execute. With
+      // scripts disabled, `allow-same-origin` is safe and is required for the
+      // srcDoc document to render. Links open in a new tab.
+      referrerPolicy="no-referrer"
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+      srcDoc={srcDoc}
+      title="Email content"
+    />
+  );
+}
+
+const emailBaseStyles = `
+  html, body { margin: 0; padding: 0; }
+  body {
+    padding: 16px;
+    background: #ffffff;
+    color: #1a1a1a;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  img { max-width: 100%; height: auto; }
+  a { color: #2563eb; }
+  table { max-width: 100%; }
+`;
+
+function buildEmailSrcDoc(html: string) {
+  const clean = DOMPurify.sanitize(html, {
+    ADD_ATTR: ["target"],
+    FORBID_TAGS: ["script", "object", "embed", "form", "iframe"],
+  });
+
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><base target="_blank"><style>${emailBaseStyles}</style></head><body>${clean}</body></html>`;
 }

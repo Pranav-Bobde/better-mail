@@ -281,12 +281,8 @@ export function logMailboxError(
 function getMailboxCounts(accessToken: string, userId: string) {
   return Promise.all([
     getSystemLabelCounts(accessToken, userId),
-    getMessageCountByQuery(accessToken, userId, "-in:inbox -in:sent -in:drafts -in:trash -in:spam"),
-    getMessageCountByQuery(
-      accessToken,
-      userId,
-      "category:promotions (receipt OR order OR purchase)",
-    ),
+    getArchiveLabelCount(accessToken, userId),
+    getPromotionsLabelCount(accessToken, userId),
   ]).then(([systemCounts, archive, shopping]) => ({
     ...systemCounts,
     archive,
@@ -322,6 +318,22 @@ async function getSystemLabelCounts(accessToken: string, userId: string) {
   );
 }
 
+function getArchiveLabelCount(accessToken: string, userId: string) {
+  return getMessageCountByQuery(
+    accessToken,
+    userId,
+    "-in:inbox -in:sent -in:drafts -in:trash -in:spam",
+  );
+}
+
+function getPromotionsLabelCount(accessToken: string, userId: string) {
+  return getMessageCountByQuery(
+    accessToken,
+    userId,
+    "category:promotions (receipt OR order OR purchase)",
+  );
+}
+
 async function getMessageCountByQuery(accessToken: string, userId: string, query: string) {
   const response = await listGmailMessages({
     accessToken,
@@ -333,7 +345,7 @@ async function getMessageCountByQuery(accessToken: string, userId: string, query
   return response.resultSizeEstimate ?? 0;
 }
 
-function toMailMessage(message: GmailMessage, labelById: ReadonlyMap<string, GmailLabel>) {
+export function toMailMessage(message: GmailMessage, labelById: ReadonlyMap<string, GmailLabel>) {
   const headers = message.payload?.headers ?? [];
   const from = parseEmailAddress(getHeaderValue(headers, "From"));
   const labelIds = message.labelIds ?? [];
@@ -341,10 +353,12 @@ function toMailMessage(message: GmailMessage, labelById: ReadonlyMap<string, Gma
   return {
     date: getMessageDate(message, headers),
     email: from.email,
+    html: getDisplayHtml(message),
     id: message.id,
     labels: getDisplayLabels(labelIds, labelById),
     name: from.name,
     read: !labelIds.includes("UNREAD"),
+    snippet: message.snippet,
     subject: getMessageSubject(headers),
     text: getDisplayText(message),
     threadId: message.threadId,
@@ -389,20 +403,38 @@ function getDirectPlainText(part: GmailMessagePart) {
 }
 
 function getNestedPlainText(part: GmailMessagePart) {
-  const parts = getNestedParts(part);
+  const parts = part.parts ?? [];
   return decodePartBody(
     findPartWithBody([...parts, ...parts.flatMap((item) => item.parts ?? [])], "text/plain"),
   );
-}
-
-function getNestedParts(part: GmailMessagePart) {
-  return part.parts ?? [];
 }
 
 function getHtmlTextFromPart(part: GmailMessagePart) {
   const htmlPart = findPartWithBody(part.parts ?? [], "text/html");
 
   return htmlPart ? stripHtml(decodePartBody(htmlPart)) : "";
+}
+
+function getDisplayHtml(message: GmailMessage) {
+  return getMessageHtml(message.payload) || undefined;
+}
+
+function getMessageHtml(part: GmailMessagePart | undefined): string {
+  if (!part) {
+    return "";
+  }
+
+  if (part.mimeType === "text/html") {
+    return decodePartBody(part);
+  }
+
+  const parts = part.parts ?? [];
+  const htmlPart = findPartWithBody(
+    [...parts, ...parts.flatMap((item) => item.parts ?? [])],
+    "text/html",
+  );
+
+  return decodePartBody(htmlPart);
 }
 
 function findPartWithBody(parts: readonly GmailMessagePart[], mimeType: string) {

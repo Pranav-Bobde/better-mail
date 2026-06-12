@@ -58,17 +58,25 @@ export function AccountSwitcher({
       <SelectTrigger
         aria-label="Select account"
         className={cn(
-          "flex items-center gap-2 [&>span]:line-clamp-1 [&>span]:flex [&>span]:w-full [&>span]:items-center [&>span]:gap-1 [&>span]:truncate [&_svg]:size-4 [&_svg]:shrink-0",
-          isCollapsed &&
-            "flex size-9 shrink-0 items-center justify-center p-0 [&>span]:w-auto [&>svg]:hidden",
+          "flex items-center gap-2 rounded-md [&>span]:line-clamp-1 [&>span]:flex [&>span]:w-full [&>span]:items-center [&>span]:gap-2 [&>span]:truncate [&_svg]:size-4 [&_svg]:shrink-0",
+          getAccountTriggerSizeClassName(isCollapsed),
         )}
       >
-        <SelectValue>
+        <SelectValue className={cn(isCollapsed && "flex-none justify-center")}>
           {selectedAccountOption.icon}
-          <span className={cn("ml-2", isCollapsed && "hidden")}>{selectedAccountOption.label}</span>
+          <span className={cn("truncate text-sm font-medium", isCollapsed && "hidden")}>
+            {selectedAccountOption.email}
+          </span>
         </SelectValue>
       </SelectTrigger>
-      <SelectContent className="w-56">
+      <SelectContent
+        align="start"
+        alignItemWithTrigger={false}
+        // Match the trigger width when expanded (like the shadcn mail example);
+        // fall back to a readable fixed width when the sidebar is collapsed and the
+        // trigger is only a 36px icon.
+        className={getAccountContentWidthClassName(isCollapsed)}
+      >
         {accountOptions.map((item) => (
           <SelectItem key={item.email} value={item.email}>
             <div className="flex items-center gap-3 [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-foreground">
@@ -80,4 +88,16 @@ export function AccountSwitcher({
       </SelectContent>
     </Select>
   );
+}
+
+function getAccountTriggerSizeClassName(isCollapsed: boolean) {
+  if (isCollapsed) {
+    return "flex shrink-0 items-center justify-center p-0 data-[size=default]:size-9 [&>span]:w-auto [&>svg]:hidden";
+  }
+
+  return "w-full data-[size=default]:h-10";
+}
+
+function getAccountContentWidthClassName(isCollapsed: boolean) {
+  return isCollapsed ? "w-56" : "w-(--anchor-width)";
 }

@@ -1,7 +1,7 @@
 "use client";
 
-import { CopilotChat } from "@copilotkit/react-core/v2";
-import { Pencil, Send, Sparkles, X } from "lucide-react";
+import { CopilotChat, useAgent, UseAgentUpdate } from "@copilotkit/react-core/v2";
+import { FileText, Inbox, Pencil, Reply, Search, Send, Sparkles, X } from "lucide-react";
 import * as React from "react";
 
 import { Button } from "@code-main/ui/components/button";
@@ -33,10 +33,16 @@ export function AskAIPanel({
   return (
     <div
       aria-hidden={!isOpen}
-      className={getAskAIPanelClassName(isOpen)}
-      style={getAskAIPanelStyle(isOpen)}
+      className={cn(
+        "h-full shrink-0 overflow-hidden bg-background transition-[width] duration-300 ease-in-out",
+        isOpen ? "border-l" : "pointer-events-none",
+      )}
+      style={{ width: isOpen ? aiPanelWidth : 0 }}
     >
-      {content}
+      {/* Fixed-width inner so content does not reflow while the panel slides. */}
+      <div className="flex h-full flex-col" style={{ width: aiPanelWidth }}>
+        {content}
+      </div>
     </div>
   );
 }
@@ -48,47 +54,110 @@ function AskAIPanelContent({
   readonly onClose: () => void;
   readonly threadId: string;
 }) {
+  const chatRef = React.useRef<HTMLDivElement>(null);
+  const { agent } = useAgent({
+    agentId: "default",
+    updates: [UseAgentUpdate.OnMessagesChanged],
+  });
+  const isEmpty = !agent || agent.messages.length === 0;
+
+  const fillPrompt = React.useCallback((prompt: string) => {
+    fillChatInput(chatRef.current, prompt);
+  }, []);
+
   return (
     <>
       <div className="flex h-[52px] shrink-0 items-center gap-2 px-4">
-        <Sparkles className="size-4 text-muted-foreground" />
-        <span className="text-sm font-semibold">Ask AI</span>
+        <div className="flex items-center gap-2">
+          <Sparkles className="size-4 text-foreground" />
+          <span className="text-sm font-semibold">Ask AI</span>
+        </div>
         <Button className="ml-auto size-7" onClick={onClose} size="icon" variant="ghost">
           <X className="size-4" />
           <span className="sr-only">Close AI panel</span>
         </Button>
       </div>
       <Separator />
-      <div className="mail-copilot-chat min-h-0 flex-1">
-        <CopilotChat
-          agentId="default"
-          className="h-full"
-          labels={{
-            chatInputPlaceholder: "Ask AI to compose, search, filter, or open mail...",
-            welcomeMessageText:
-              "Ask me to summarize the current email, draft a reply, search mail, or show unread messages.",
-          }}
-          threadId={threadId}
-        />
+      <div className="relative min-h-0 flex-1">
+        <div className="mail-copilot-chat h-full" ref={chatRef}>
+          <CopilotChat
+            agentId="default"
+            className="h-full"
+            input={{ bottomAnchored: true }}
+            labels={{
+              chatInputPlaceholder: "Ask anything…",
+            }}
+            threadId={threadId}
+          />
+        </div>
+        {isEmpty ? <AskAIEmptyState onPick={fillPrompt} /> : null}
       </div>
     </>
   );
 }
 
-function getAskAIPanelClassName(isOpen: boolean) {
-  return cn(
-    "flex h-full flex-col border-l bg-background",
-    isOpen ? "opacity-100" : "overflow-hidden opacity-0",
+const aiSuggestions = [
+  {
+    icon: FileText,
+    label: "Summarize this email",
+    prompt: "Summarize the selected email in a few bullet points.",
+  },
+  {
+    icon: Reply,
+    label: "Draft a reply",
+    prompt: "Draft a reply to the selected email.",
+  },
+  {
+    icon: Inbox,
+    label: "Show unread mail",
+    prompt: "Show my unread emails.",
+  },
+  {
+    icon: Search,
+    label: "Find emails from this week",
+    prompt: "Find emails from this week.",
+  },
+] as const;
+
+function AskAIEmptyState({ onPick }: { readonly onPick: (prompt: string) => void }) {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-0 bottom-28 flex flex-col items-center justify-center px-5">
+      <div className="pointer-events-auto w-full max-w-[300px]">
+        <div className="mb-4 flex flex-col items-center gap-1.5 text-center">
+          <div className="flex size-9 items-center justify-center rounded-full border bg-muted/50">
+            <Sparkles className="size-4 text-muted-foreground" />
+          </div>
+          <p className="text-sm font-medium text-foreground">How can I help?</p>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          {aiSuggestions.map((suggestion) => (
+            <button
+              className="flex items-center gap-2.5 rounded-md border bg-background px-3 py-2 text-left text-xs text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+              key={suggestion.label}
+              onClick={() => onPick(suggestion.prompt)}
+              type="button"
+            >
+              <suggestion.icon className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate">{suggestion.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 
-function getAskAIPanelStyle(isOpen: boolean): React.CSSProperties {
-  const width = isOpen ? aiPanelWidth : 0;
+function fillChatInput(container: HTMLElement | null, text: string) {
+  const textarea = container?.querySelector("textarea");
+  if (!textarea) return;
 
-  return {
-    flex: `0 0 ${width}px`,
-    width,
-  };
+  const valueSetter = Object.getOwnPropertyDescriptor(
+    window.HTMLTextAreaElement.prototype,
+    "value",
+  )?.set;
+  valueSetter?.call(textarea, text);
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  textarea.focus();
 }
 
 export function DraftEmailPreviewCard({
@@ -127,48 +196,50 @@ export function DraftEmailPreviewCard({
 
   return (
     <>
-      <p className="my-2 text-sm leading-6 text-foreground">{preview.message}</p>
-      <div className="my-3 overflow-hidden rounded-lg border bg-background text-sm shadow-sm">
-        <div className="border-b px-4 py-3">
-          <p className="font-semibold">Draft preview</p>
-          <p className="mt-1 text-xs text-muted-foreground">{preview.statusText}</p>
+      <p className="my-2 text-sm leading-relaxed text-foreground">{preview.message}</p>
+      <div className="my-2 overflow-hidden rounded-lg border bg-muted/30 text-sm">
+        <div className="flex items-center justify-between border-b px-3 py-2">
+          <p className="text-xs font-medium text-foreground">Draft preview</p>
+          <p className="text-xs text-muted-foreground">{preview.statusText}</p>
         </div>
-        <div className="space-y-3 px-4 py-3">
+        <div className="space-y-2.5 px-3 py-2.5">
           <DraftPreviewField label="To" value={preview.draft.to} />
           <DraftPreviewField label="Subject" value={preview.draft.subject} />
           <div>
-            <p className="text-xs font-semibold text-muted-foreground">Body</p>
-            <p className="max-h-48 overflow-y-auto whitespace-pre-wrap leading-6">
+            <p className="mb-0.5 text-xs font-medium text-muted-foreground">Body</p>
+            <p className="max-h-36 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-foreground">
               {preview.draft.body || "(pending)"}
             </p>
           </div>
           {preview.showValidationError ? (
-            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
               Draft needs a valid recipient, subject, and body.
             </p>
           ) : null}
           {error ? (
-            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
               {error}
             </p>
           ) : null}
         </div>
-        <div className="flex items-center gap-2 border-t px-4 py-3">
+        <div className="flex items-center gap-2 border-t px-3 py-2">
           <Button
+            className="h-7 gap-1.5 px-2.5 text-xs"
             disabled={!preview.canChoose}
             onClick={() => void choose("opened_in_compose")}
             size="sm"
           >
-            <Pencil className="size-4" />
+            <Pencil className="size-3.5" />
             Open
           </Button>
           <Button
+            className="h-7 gap-1.5 px-2.5 text-xs"
             disabled={!preview.canChoose}
             onClick={() => void choose("sent")}
             size="sm"
             variant="outline"
           >
-            <Send className="size-4" />
+            <Send className="size-3.5" />
             Send
           </Button>
         </div>
@@ -202,15 +273,25 @@ function createDraftPreviewState(
 ): DraftPreviewState {
   const validDraft = getValidDraft(args);
   const decision = getDraftDecision(validDraft, draftDecisions);
+  const isReady = Boolean(validDraft);
 
   return {
-    canChoose: canChooseDraft(status, validDraft, decision, isSending),
+    canChoose: canChooseDraft(status, isReady, decision, isSending),
     draft: validDraft ?? createPendingDraft(args),
     message: getDraftPreviewMessage(validDraft),
     showValidationError: !validDraft && status !== "inProgress",
-    statusText: getDraftStatusText(decision, status, validDraft?.to, isSending),
+    statusText: getDraftStatusText(decision, isReady, validDraft?.to, isSending),
     validDraft,
   };
+}
+
+function canChooseDraft(
+  status: "inProgress" | "executing" | "complete",
+  isReady: boolean,
+  decision: DraftEmailDecision | null,
+  isSending: boolean,
+) {
+  return status !== "inProgress" && isReady && decision === null && !isSending;
 }
 
 function getValidDraft(args: Partial<DraftEmailInput>) {
@@ -241,15 +322,6 @@ function getDraftPreviewMessage(draft: DraftEmailInput | null) {
   return draft?.responseText ?? "I drafted this email. Review it before sending.";
 }
 
-function canChooseDraft(
-  status: "inProgress" | "executing" | "complete",
-  draft: DraftEmailInput | null,
-  decision: DraftEmailDecision | null,
-  isSending: boolean,
-) {
-  return status !== "inProgress" && Boolean(draft) && decision === null && !isSending;
-}
-
 async function runDraftDecision(
   action: DraftEmailDecision,
   draft: DraftEmailInput,
@@ -275,8 +347,8 @@ async function runDraftDecision(
 function DraftPreviewField({ label, value }: { readonly label: string; readonly value: string }) {
   return (
     <div>
-      <p className="text-xs font-semibold text-muted-foreground">{label}</p>
-      <p className="break-words">{value || "(pending)"}</p>
+      <p className="mb-0.5 text-xs font-medium text-muted-foreground">{label}</p>
+      <p className="break-words text-xs text-foreground">{value || "(pending)"}</p>
     </div>
   );
 }
@@ -286,19 +358,13 @@ const draftDecisionStatusText = {
   sent: (to: string | undefined) => `Sent through Gmail to ${to}.`,
 } satisfies Record<DraftEmailDecision, (to: string | undefined) => string>;
 
-const draftToolStatusText = {
-  complete: "Review before sending.",
-  executing: "Review before sending.",
-  inProgress: "Preparing draft...",
-} as const;
-
 function getDraftStatusText(
   decision: DraftEmailDecision | null,
-  status: "inProgress" | "executing" | "complete",
+  isReady: boolean,
   to: string | undefined,
   isSending: boolean,
 ) {
   if (isSending) return "Sending through Gmail...";
   if (decision) return draftDecisionStatusText[decision](to);
-  return draftToolStatusText[status];
+  return isReady ? "Review before sending." : "Preparing draft...";
 }

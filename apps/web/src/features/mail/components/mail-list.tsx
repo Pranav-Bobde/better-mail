@@ -43,7 +43,7 @@ function MailListItem({
   return (
     <button
       className={cn(
-        "flex flex-col items-start gap-2 rounded-lg border p-3 text-left text-sm transition-all hover:bg-accent",
+        "flex w-full min-w-0 flex-col items-start gap-2 overflow-hidden rounded-lg border p-3 text-left text-sm transition-all hover:bg-accent",
         selected && "bg-muted",
       )}
       aria-pressed={selected}
@@ -51,8 +51,8 @@ function MailListItem({
       type="button"
     >
       <MailListItemHeader item={item} selected={selected} />
-      <div className="line-clamp-2 text-xs text-muted-foreground">
-        {item.text.substring(0, 300)}
+      <div className="line-clamp-2 w-full break-words text-xs text-muted-foreground">
+        {getPreviewText(item)}
       </div>
       <div className="flex items-center gap-2">
         {item.labels.map((label) => (
@@ -73,19 +73,41 @@ function MailListItemHeader({
   readonly selected: boolean;
 }) {
   return (
-    <div className="flex w-full flex-col gap-1">
-      <div className="flex items-center">
-        <div className="flex items-center gap-2">
-          <div className="font-semibold">{item.name}</div>
-          <span className={cn("flex size-2 rounded-full bg-blue-600", item.read && "hidden")} />
+    <div className="flex w-full min-w-0 flex-col gap-1">
+      <div className="flex w-full items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="truncate font-semibold">{item.name}</div>
+          <span
+            className={cn("flex size-2 shrink-0 rounded-full bg-blue-600", item.read && "hidden")}
+          />
         </div>
-        <div className={cn("ml-auto text-xs", selectedDateClassName(selected))}>
+        <div className={cn("ml-auto shrink-0 text-xs", selectedDateClassName(selected))}>
           {formatDistanceToNow(new Date(item.date), { addSuffix: true })}
         </div>
       </div>
-      <div className="text-xs font-medium">{item.subject}</div>
+      <div className="line-clamp-1 w-full break-words text-xs font-medium">{item.subject}</div>
     </div>
   );
+}
+
+function getPreviewText(item: Mail) {
+  const source = item.snippet?.trim() ? item.snippet : item.text;
+  return cleanPreviewText(source).substring(0, 280);
+}
+
+// Gmail snippets are HTML-entity-encoded; plain-text bodies can leak markup or
+// CSS. Strip both to a readable single line for the list preview.
+function cleanPreviewText(raw: string) {
+  return raw
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&#39;|&apos;|&rsquo;/gi, "’")
+    .replace(/&quot;/gi, '"')
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function selectedDateClassName(selected: boolean) {
