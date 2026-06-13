@@ -4,7 +4,8 @@ import dotenv from "dotenv";
 import { defineConfig, env } from "prisma/config";
 
 dotenv.config({
-  path: "../../apps/web/.env",
+  override: true,
+  path: "../../apps/web/.env.local",
 });
 
 export default defineConfig({

@@ -15,8 +15,6 @@ export const sendMailInputSchema = z.object({
   to: z.email(),
 });
 
-export const startWatchInputSchema = z.object({});
-
 const mailMessageSchema = z.object({
   date: z.string(),
   email: z.email(),
@@ -54,10 +52,8 @@ const mailboxDataSchema = z.object({
     label: z.string(),
   }),
   counts: mailboxCountsSchema,
-  lastHistoryId: z.string().optional(),
   messages: z.array(mailMessageSchema),
   source: z.literal("gmail"),
-  watchExpiration: z.string().optional(),
 });
 
 export const getMailboxOutputSchema = z.discriminatedUnion("status", [
@@ -76,35 +72,6 @@ export const sendMailOutputSchema = z.discriminatedUnion("status", [
     data: z.object({
       messageId: z.string(),
       threadId: z.string(),
-    }),
-    status: z.literal("ok"),
-  }),
-  z.object({
-    error: z.string(),
-    status: z.literal("error"),
-  }),
-]);
-
-export const startWatchOutputSchema = z.discriminatedUnion("status", [
-  z.object({
-    data: z.object({
-      expiration: z.string(),
-      historyId: z.string(),
-      labelIds: z.array(z.string()),
-    }),
-    status: z.literal("ok"),
-  }),
-  z.object({
-    error: z.string(),
-    status: z.literal("error"),
-  }),
-]);
-
-export const gmailPushOutputSchema = z.discriminatedUnion("status", [
-  z.object({
-    data: z.object({
-      emailAddress: z.string(),
-      historyId: z.string(),
     }),
     status: z.literal("ok"),
   }),

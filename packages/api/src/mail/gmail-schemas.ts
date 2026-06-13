@@ -27,13 +27,6 @@ const gmailMessagePartSchema = gmailMessagePartBaseSchema.extend({
   parts: z.array(nestedGmailMessagePartSchema).optional(),
 });
 
-export const gmailTokenResponseSchema = z.object({
-  access_token: z.string(),
-  expires_in: z.number().optional(),
-  scope: z.string().optional(),
-  token_type: z.string(),
-});
-
 export const gmailProfileResponseSchema = z.object({
   emailAddress: z.string(),
   historyId: z.string().optional(),
@@ -95,33 +88,6 @@ export const gmailSendResponseSchema = z.object({
   id: z.string(),
   labelIds: z.array(z.string()).optional(),
   threadId: z.string(),
-});
-
-export const gmailWatchResponseSchema = z.object({
-  expiration: z.string(),
-  historyId: z.string(),
-});
-
-export const gmailPubSubPushSchema = z.object({
-  message: z.object({
-    attributes: z.record(z.string(), z.string()).optional(),
-    data: z.string(),
-    messageId: z.string().optional(),
-    publishTime: z.string().optional(),
-  }),
-  subscription: z.string().optional(),
-});
-
-export const gmailPushDataSchema = z.object({
-  emailAddress: z.string(),
-  historyId: z.union([z.string(), z.number()]).transform((historyId) => String(historyId)),
-});
-
-export const gmailDemoStateSchema = z.object({
-  emailAddress: z.string().optional(),
-  historyId: z.string().optional(),
-  updatedAt: z.string(),
-  watchExpiration: z.string().optional(),
 });
 
 export type GmailLabel = z.infer<typeof gmailLabelResponseSchema>;

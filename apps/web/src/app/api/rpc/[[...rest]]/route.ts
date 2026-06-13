@@ -1,4 +1,4 @@
-import { createRpcContext } from "@code-main/api/context";
+import { createRpcContext, type AuthContext } from "@code-main/api/context";
 import { rpcErrors, type RpcErrorCode } from "@code-main/api/observability/rpc/errors";
 import {
   createRpcErrorFields,
@@ -16,6 +16,7 @@ import { RPCHandler } from "@orpc/server/fetch";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
 import { EvlogError } from "evlog";
 import { NextRequest } from "next/server";
+import { auth } from "@code-main/auth";
 
 import { identifyEvlogUser } from "@/shared/lib/evlog-auth";
 import { useLogger, withEvlog } from "@/shared/lib/evlog";
@@ -34,9 +35,11 @@ async function handleRequest(req: NextRequest) {
   const log = useLogger<RpcWideEventFields>();
 
   try {
+    const authContext = await createRouteAuthContext(req);
+
     const rpcResult = await rpcHandler.handle(req, {
       prefix: "/api/rpc",
-      context: await createRpcContext(req, log),
+      context: await createRpcContext(req, log, authContext),
     });
     if (rpcResult.response) return rpcResult.response;
   } catch (error) {
@@ -59,6 +62,36 @@ async function handleApiReferenceRequest(req: NextRequest) {
   }
 
   return handleRpcError(req, getRpcProcedureMetadata(req), rpcErrors.PROCEDURE_NOT_FOUND());
+}
+
+async function createRouteAuthContext(req: NextRequest): Promise<AuthContext> {
+  const session = await auth.api.getSession({
+    headers: req.headers,
+  });
+
+  if (!session) {
+    return {
+      getGoogleAccessToken: null,
+      session: null,
+    };
+  }
+
+  return {
+    getGoogleAccessToken: async () => {
+      const token = await auth.api.getAccessToken({
+        body: {
+          providerId: "google",
+        },
+        headers: req.headers,
+      });
+
+      return {
+        accessToken: token.accessToken,
+        scopes: token.scopes,
+      };
+    },
+    session,
+  };
 }
 
 function handleRpcError(req: Request, metadata: RpcProcedureMetadata, error: unknown) {

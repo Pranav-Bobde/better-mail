@@ -14,6 +14,7 @@ import {
   File,
   Inbox,
   Loader2,
+  LogOut,
   MessagesSquare,
   Pencil,
   Search,
@@ -35,6 +36,7 @@ import {
 } from "@code-main/ui/components/resizable";
 import { Separator } from "@code-main/ui/components/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@code-main/ui/components/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@code-main/ui/components/tooltip";
 import { cn } from "@code-main/ui/lib/utils";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -68,6 +70,7 @@ import {
 import { MailList } from "@/features/mail/components/mail-list";
 import { Nav, type NavLink } from "@/features/mail/components/nav";
 import { ModeToggle } from "@/shared/components/mode-toggle";
+import { authClient } from "@/shared/utils/auth-client";
 import { orpc } from "@/shared/utils/orpc";
 
 type MailboxCounts = MailboxData["counts"];
@@ -85,6 +88,21 @@ const fallbackCounts = {
   trash: 0,
   unread: mails.filter(isUnreadMail).length,
   updates: 342,
+} satisfies MailboxCounts;
+
+const emptyCounts = {
+  archive: 0,
+  drafts: 0,
+  forums: 0,
+  inbox: 0,
+  junk: 0,
+  promotions: 0,
+  sent: 0,
+  shopping: 0,
+  social: 0,
+  trash: 0,
+  unread: 0,
+  updates: 0,
 } satisfies MailboxCounts;
 
 const copilotFetchBindingKey = "__codeMainCopilotFetchBound";
@@ -157,13 +175,18 @@ function MailWorkspace({
   );
   const [pendingOpenSearchQuery, setPendingOpenSearchQuery] = React.useState<string | null>(null);
   const layout = createMailLayout(defaultLayout);
-  const { mailbox, isFetching: isMailboxFetching } = useMailboxData(searchQuery, view);
+  const {
+    errorMessage: mailboxErrorMessage,
+    isFetching: isMailboxFetching,
+    mailbox,
+  } = useMailboxData(searchQuery, view);
   const sendMailMutation = useSendReplyMutation();
-  const activeMails = getActiveMails(mailbox);
+  const mailboxViewState = getMailboxViewState(mailbox, mailboxErrorMessage);
+  const activeMails = mailboxViewState.activeMails;
   const clientSearchQuery = getClientMailSearchQuery(searchQuery, mailbox !== null);
   const searchFilteredMails = getSearchFilteredMails(activeMails, clientSearchQuery);
   const visibleMails = getVisibleMails(searchFilteredMails, view);
-  const counts = getMailboxCounts(mailbox);
+  const counts = mailboxViewState.counts;
   const primaryLinks = React.useMemo(() => createPrimaryLinks(counts), [counts]);
   const categoryLinks = React.useMemo(() => createCategoryLinks(counts), [counts]);
   const selectedMail = getSelectedMail(activeMails, selected);
@@ -381,6 +404,7 @@ function MailWorkspace({
           onSelectMail={handleSelectMail}
           onToggleAiPanel={toggleAiPanel}
           onViewChange={setView}
+          mailboxErrorMessage={mailboxViewState.blockingErrorMessage}
           searchFilteredMails={searchFilteredMails}
           searchInput={searchInput}
           selected={selected}
@@ -421,6 +445,7 @@ function MailListPanel({
   defaultSize,
   isAiOpen,
   isMailboxFetching,
+  mailboxErrorMessage,
   onOpenCompose,
   onSearchInputChange,
   onSearchQueryChange,
@@ -436,6 +461,7 @@ function MailListPanel({
   readonly defaultSize: number | undefined;
   readonly isAiOpen: boolean;
   readonly isMailboxFetching: boolean;
+  readonly mailboxErrorMessage: string | null;
   readonly onOpenCompose: () => void;
   readonly onSearchInputChange: (value: string) => void;
   readonly onSearchQueryChange: (value: string) => void;
@@ -468,13 +494,61 @@ function MailListPanel({
           searchInput={searchInput}
         />
         <TabsContent className="m-0 min-h-0 flex-1" value="all">
-          <MailList items={searchFilteredMails} onSelect={onSelectMail} selected={selected} />
+          {mailboxErrorMessage ? (
+            <MailboxErrorState message={mailboxErrorMessage} />
+          ) : (
+            <MailList items={searchFilteredMails} onSelect={onSelectMail} selected={selected} />
+          )}
         </TabsContent>
         <TabsContent className="m-0 min-h-0 flex-1" value="unread">
-          <MailList items={visibleMails} onSelect={onSelectMail} selected={selected} />
+          {mailboxErrorMessage ? (
+            <MailboxErrorState message={mailboxErrorMessage} />
+          ) : (
+            <MailList items={visibleMails} onSelect={onSelectMail} selected={selected} />
+          )}
         </TabsContent>
       </Tabs>
     </ResizablePanel>
+  );
+}
+
+function MailboxErrorState({ message }: { readonly message: string }) {
+  return (
+    <div className="flex h-full items-center justify-center p-6">
+      <div className="grid max-w-xs gap-3 rounded-lg border bg-background p-4 text-center">
+        <AlertCircle className="mx-auto size-5 text-muted-foreground" />
+        <div className="grid gap-1">
+          <p className="text-sm font-medium">Gmail needs reconnect</p>
+          <p className="text-xs text-muted-foreground">{message}</p>
+        </div>
+        <ReconnectGoogleButton />
+      </div>
+    </div>
+  );
+}
+
+function ReconnectGoogleButton() {
+  const [isPending, setIsPending] = React.useState(false);
+
+  async function reconnect() {
+    setIsPending(true);
+    const result = await authClient.signIn.social({
+      callbackURL: "/",
+      errorCallbackURL: "/login",
+      provider: "google",
+    });
+
+    if (result.error) {
+      toast.error(`Error: ${result.error.message ?? "Google reconnect failed."}`);
+      setIsPending(false);
+    }
+  }
+
+  return (
+    <Button disabled={isPending} onClick={() => void reconnect()} size="sm">
+      {isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
+      Reconnect Google
+    </Button>
   );
 }
 
@@ -596,10 +670,60 @@ function MailSidebarPanel({
       <Nav isCollapsed={isCollapsed} links={primaryLinks} />
       <Separator />
       <Nav isCollapsed={isCollapsed} links={categoryLinks} />
-      <div className={cn("mt-auto p-2", isCollapsed && "flex justify-center")}>
+      <div className={cn("mt-auto grid gap-1 p-2", isCollapsed && "justify-center")}>
         <ModeToggle isCollapsed={isCollapsed} />
+        <MailSignOutButton isCollapsed={isCollapsed} />
       </div>
     </ResizablePanel>
+  );
+}
+
+function MailSignOutButton({ isCollapsed }: { readonly isCollapsed: boolean }) {
+  const [isPending, setIsPending] = React.useState(false);
+
+  async function signOut() {
+    setIsPending(true);
+    await authClient.signOut({
+      fetchOptions: {
+        onSuccess: () => {
+          window.location.href = "/login";
+        },
+      },
+    });
+    setIsPending(false);
+  }
+
+  if (isCollapsed) {
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              disabled={isPending}
+              onClick={() => void signOut()}
+              size="icon"
+              variant="ghost"
+            />
+          }
+        >
+          <LogOut className="size-4" />
+          <span className="sr-only">Sign out</span>
+        </TooltipTrigger>
+        <TooltipContent side="right">Sign out</TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <Button
+      className="w-full justify-start gap-2 px-2 text-muted-foreground"
+      disabled={isPending}
+      onClick={() => void signOut()}
+      variant="ghost"
+    >
+      <LogOut className="size-4" />
+      <span className="text-sm">Sign out</span>
+    </Button>
   );
 }
 
@@ -627,11 +751,52 @@ function useMailboxData(searchQuery: string, view: MailView) {
   );
 
   const mailbox = mailboxQuery.data?.status === "ok" ? mailboxQuery.data.data : null;
+  const errorMessage = getMailboxQueryErrorMessage(mailboxQuery.error, mailboxQuery.data);
 
   return {
+    errorMessage,
     isFetching: mailboxQuery.isFetching,
     mailbox,
   };
+}
+
+function getMailboxViewState(mailbox: MailboxData | null, errorMessage: string | null) {
+  if (errorMessage !== null && mailbox === null) {
+    return {
+      activeMails: [],
+      blockingErrorMessage: errorMessage,
+      counts: emptyCounts,
+    };
+  }
+
+  return {
+    activeMails: getActiveMails(mailbox),
+    blockingErrorMessage: null,
+    counts: getMailboxCounts(mailbox),
+  };
+}
+
+function getMailboxQueryErrorMessage(
+  error: Error | null,
+  data:
+    | {
+        readonly error: string;
+        readonly status: "error";
+      }
+    | {
+        readonly status: "ok";
+      }
+    | undefined,
+) {
+  if (error) {
+    return error.message;
+  }
+
+  if (data?.status === "error") {
+    return data.error;
+  }
+
+  return null;
 }
 
 function useSendReplyMutation() {

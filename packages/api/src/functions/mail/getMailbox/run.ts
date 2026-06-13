@@ -10,7 +10,7 @@ export async function runGetMailbox(
   context: Context,
 ) {
   try {
-    const result = await getMailboxData(input);
+    const result = await getMailboxData(input, context);
 
     context.log.set(createRpcSuccessFields("mail.getMailbox"));
     return result;

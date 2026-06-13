@@ -1,25 +1,47 @@
 import { defineErrorCatalog } from "evlog";
 
 export const mailErrors = defineErrorCatalog("mail", {
-  GMAIL_ACCESS_TOKEN_REQUEST_FAILED: {
+  AUTH_REQUIRED: {
     status: 200,
-    message: "Gmail auth failed",
-    why: "OAuth token endpoint request failed while refreshing the demo mailbox access token",
-    fix: "Check Google OAuth client credentials and refresh token for this request",
+    message: "Sign in required",
+    why: "A user session is required before accessing Gmail for this request",
+    fix: "Sign in with Google and retry the mailbox request",
     internal: {
-      dependency: "gmail",
-      dependencyOperation: "oauthToken",
+      dependency: "better-auth",
+      dependencyOperation: "getSession",
       module: "mail",
     },
   },
-  GMAIL_ACCESS_TOKEN_RESPONSE_INVALID: {
+  GMAIL_ACCOUNT_NOT_CONNECTED: {
     status: 200,
-    message: "Gmail auth response invalid",
-    why: "OAuth token endpoint returned a response that did not match the expected token contract",
-    fix: "Check OAuth response shape, scopes, and client credentials for this request",
+    message: "Gmail account not connected",
+    why: "The signed-in user does not have a connected Google account access token",
+    fix: "Reconnect the Google account with Gmail read and send scopes",
     internal: {
-      dependency: "gmail",
-      dependencyOperation: "oauthToken",
+      dependency: "better-auth",
+      dependencyOperation: "getAccessToken",
+      module: "mail",
+    },
+  },
+  GMAIL_ACCESS_TOKEN_REQUEST_FAILED: {
+    status: 200,
+    message: "Gmail auth failed",
+    why: "Better Auth failed while loading or refreshing the user's Google access token",
+    fix: "Check Google OAuth account connection, token expiry, and granted Gmail scopes",
+    internal: {
+      dependency: "better-auth",
+      dependencyOperation: "getAccessToken",
+      module: "mail",
+    },
+  },
+  GMAIL_SCOPE_MISSING: {
+    status: 200,
+    message: "Gmail scope missing",
+    why: "The connected Google account did not grant a required Gmail API scope",
+    fix: "Reconnect Google and approve the requested Gmail read and send scopes",
+    internal: {
+      dependency: "better-auth",
+      dependencyOperation: "getAccessToken",
       module: "mail",
     },
   },
@@ -70,7 +92,7 @@ export const mailErrors = defineErrorCatalog("mail", {
   GMAIL_GET_PROFILE_FAILED: {
     status: 200,
     message: "Gmail profile read failed",
-    why: "Gmail users.getProfile failed while loading demo mailbox identity",
+    why: "Gmail users.getProfile failed while loading mailbox identity",
     fix: "Check Gmail profile response status and OAuth mailbox access for this request",
     internal: {
       dependency: "gmail",
@@ -114,7 +136,7 @@ export const mailErrors = defineErrorCatalog("mail", {
   GMAIL_LIST_MESSAGES_FAILED: {
     status: 200,
     message: "Gmail message list failed",
-    why: "Gmail messages.list failed while loading demo mailbox messages",
+    why: "Gmail messages.list failed while loading mailbox messages",
     fix: "Check Gmail query, response status, and OAuth mailbox access for this request",
     internal: {
       dependency: "gmail",
@@ -133,31 +155,10 @@ export const mailErrors = defineErrorCatalog("mail", {
       module: "mail",
     },
   },
-  GMAIL_NOT_CONFIGURED: {
-    status: 200,
-    message: "Gmail is not configured",
-    why: "Required demo Gmail OAuth env keys were not available for this request",
-    fix: "Set Gmail OAuth client id, client secret, and refresh token in the app env",
-    internal: {
-      dependency: "gmail",
-      module: "mail",
-    },
-  },
-  GMAIL_PUBSUB_PUSH_INVALID: {
-    status: 200,
-    message: "Gmail push payload invalid",
-    why: "Pub/Sub push payload did not match the expected Gmail notification contract",
-    fix: "Check Pub/Sub subscription payload, push endpoint, and parser fixture for this request",
-    internal: {
-      dependency: "gmail",
-      dependencyOperation: "pubsub.push",
-      module: "mail",
-    },
-  },
   GMAIL_SEND_MESSAGE_FAILED: {
     status: 200,
     message: "Gmail send failed",
-    why: "Gmail messages.send failed while sending demo mailbox email",
+    why: "Gmail messages.send failed while sending user mailbox email",
     fix: "Check recipient, MIME payload, response status, and Gmail send scope for this request",
     internal: {
       dependency: "gmail",
@@ -173,39 +174,6 @@ export const mailErrors = defineErrorCatalog("mail", {
     internal: {
       dependency: "gmail",
       dependencyOperation: "messages.send",
-      module: "mail",
-    },
-  },
-  GMAIL_STATE_WRITE_FAILED: {
-    status: 200,
-    message: "Gmail state save failed",
-    why: "Local Gmail demo state file write failed while saving watch history",
-    fix: "Check state file path permissions for this request",
-    internal: {
-      dependency: "filesystem",
-      dependencyOperation: "writeFile",
-      module: "mail",
-    },
-  },
-  GMAIL_WATCH_FAILED: {
-    status: 200,
-    message: "Gmail watch failed",
-    why: "Gmail users.watch failed while starting demo mailbox push notifications",
-    fix: "Check Pub/Sub topic, Gmail publish permission, response status, and OAuth mailbox access for this request",
-    internal: {
-      dependency: "gmail",
-      dependencyOperation: "users.watch",
-      module: "mail",
-    },
-  },
-  GMAIL_WATCH_RESPONSE_INVALID: {
-    status: 200,
-    message: "Gmail watch response invalid",
-    why: "Gmail users.watch returned a response that did not match the expected watch contract",
-    fix: "Check Gmail watch response shape and parser fixture for this request",
-    internal: {
-      dependency: "gmail",
-      dependencyOperation: "users.watch",
       module: "mail",
     },
   },

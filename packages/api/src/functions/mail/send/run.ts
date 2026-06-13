@@ -8,7 +8,7 @@ import type { sendMailInputSchema } from "./constants";
 
 export async function runSendMail(input: z.infer<typeof sendMailInputSchema>, context: Context) {
   try {
-    const result = await sendMailboxMessage(input);
+    const result = await sendMailboxMessage(input, context);
 
     context.log.set(createRpcSuccessFields("mail.send"));
     return result;

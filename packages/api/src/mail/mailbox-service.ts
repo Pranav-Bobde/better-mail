@@ -1,26 +1,22 @@
-import { env } from "@code-main/env/server";
 import { EvlogError } from "evlog";
-import { z } from "zod";
 
+import type { AuthContext } from "../context";
 import type { MailboxData, MailMessage } from "./contracts";
 import { mailErrors } from "./errors";
 import {
-  getGmailAccessToken,
-  getGmailConfig,
   getGmailLabel,
   getGmailMessage,
   getGmailProfile,
-  getGmailWatchConfig,
   listGmailLabels,
   listGmailMessages,
   sendGmailMessage,
-  startGmailWatch,
 } from "./gmail-client";
 import type { GmailLabel, GmailMessage, GmailMessagePart } from "./gmail-schemas";
-import { gmailPubSubPushSchema, gmailPushDataSchema } from "./gmail-schemas";
-import { readGmailDemoState, writeGmailDemoState } from "./gmail-state";
 
 const mailboxMaxResults = 20;
+const gmailUserId = "me";
+const gmailReadonlyScope = "https://www.googleapis.com/auth/gmail.readonly";
+const gmailSendScope = "https://www.googleapis.com/auth/gmail.send";
 
 const systemLabelCountIds = {
   drafts: "DRAFT",
@@ -54,7 +50,7 @@ const systemDisplayLabels = {
   STARRED: "starred",
 } as const;
 
-type MailboxErrorOperation = "getMailbox" | "push" | "send" | "startWatch";
+type MailboxErrorOperation = "getMailbox" | "send";
 
 const mailboxErrorByOperation = {
   getMailbox: (cause: Error) =>
@@ -64,13 +60,6 @@ const mailboxErrorByOperation = {
         dependencyOperation: "mailboxService",
       },
     }),
-  push: (cause: Error) =>
-    mailErrors.GMAIL_PUBSUB_PUSH_INVALID({
-      cause,
-      internal: {
-        dependencyOperation: "pubsub.push",
-      },
-    }),
   send: (cause: Error) =>
     mailErrors.GMAIL_SEND_MESSAGE_FAILED({
       cause,
@@ -78,33 +67,20 @@ const mailboxErrorByOperation = {
         dependencyOperation: "mailboxService",
       },
     }),
-  startWatch: (cause: Error) =>
-    mailErrors.GMAIL_WATCH_FAILED({
-      cause,
-      internal: {
-        dependencyOperation: "mailboxService",
-      },
-    }),
 } satisfies Record<MailboxErrorOperation, (cause: Error) => EvlogError>;
 
-export async function getMailboxData(input: {
-  readonly query: string;
-  readonly view: "all" | "unread";
-}) {
-  const config = getGmailConfig();
-
-  return getConfiguredMailboxData(input, config);
-}
-
-async function getConfiguredMailboxData(
-  input: { readonly query: string; readonly view: "all" | "unread" },
-  config: Extract<ReturnType<typeof getGmailConfig>, { configured: true }>,
+export async function getMailboxData(
+  input: {
+    readonly query: string;
+    readonly view: "all" | "unread";
+  },
+  authContext: AuthContext,
 ) {
-  const accessToken = await getGmailAccessToken(config);
-  const mailboxBaseData = await getMailboxBaseData(input, config, accessToken);
+  const credentials = await getGmailCredentials(authContext, [gmailReadonlyScope]);
+  const mailboxBaseData = await getMailboxBaseData(input, credentials.accessToken);
   const messageDetails = await getMailboxMessageDetails(
-    accessToken,
-    config.userId,
+    credentials.accessToken,
+    gmailUserId,
     mailboxBaseData.listResponse.messages ?? [],
   );
 
@@ -113,28 +89,25 @@ async function getConfiguredMailboxData(
 
 async function getMailboxBaseData(
   input: { readonly query: string; readonly view: "all" | "unread" },
-  config: Extract<ReturnType<typeof getGmailConfig>, { configured: true }>,
   accessToken: string,
 ) {
-  const [profile, gmailLabels, mailboxState, listResponse, counts] = await Promise.all([
-    getGmailProfile(accessToken, config.userId),
-    listGmailLabels(accessToken, config.userId),
-    readGmailDemoState(),
+  const [profile, gmailLabels, listResponse, counts] = await Promise.all([
+    getGmailProfile(accessToken, gmailUserId),
+    listGmailLabels(accessToken, gmailUserId),
     listGmailMessages({
       accessToken,
       labelIds: getListLabelIds(input.view),
       maxResults: mailboxMaxResults,
       query: getMailboxQuery(input),
-      userId: config.userId,
+      userId: gmailUserId,
     }),
-    getMailboxCounts(accessToken, config.userId),
+    getMailboxCounts(accessToken, gmailUserId),
   ]);
 
   return {
     counts,
     gmailLabels,
     listResponse,
-    mailboxState,
     profile,
   };
 }
@@ -160,30 +133,29 @@ function createMailboxSuccessData(
         label: getMailboxLabel(mailboxBaseData.profile.emailAddress),
       },
       counts: mailboxBaseData.counts,
-      lastHistoryId: mailboxBaseData.mailboxState?.historyId ?? mailboxBaseData.profile.historyId,
       messages: messageDetails.map((message) => toMailMessage(message, labelById)),
       source: "gmail" as const,
-      watchExpiration: mailboxBaseData.mailboxState?.watchExpiration,
     } satisfies MailboxData,
     status: "ok" as const,
   };
 }
 
-export async function sendMailboxMessage(input: {
-  readonly body: string;
-  readonly inReplyTo?: string;
-  readonly subject: string;
-  readonly threadId?: string;
-  readonly to: string;
-}) {
-  const config = getGmailConfig();
-
-  const accessToken = await getGmailAccessToken(config);
+export async function sendMailboxMessage(
+  input: {
+    readonly body: string;
+    readonly inReplyTo?: string;
+    readonly subject: string;
+    readonly threadId?: string;
+    readonly to: string;
+  },
+  authContext: AuthContext,
+) {
+  const credentials = await getGmailCredentials(authContext, [gmailSendScope]);
   const sentMessage = await sendGmailMessage({
-    accessToken,
+    accessToken: credentials.accessToken,
     raw: createRawMimeMessage(input),
     threadId: input.threadId,
-    userId: config.userId,
+    userId: gmailUserId,
   });
 
   return {
@@ -191,77 +163,6 @@ export async function sendMailboxMessage(input: {
       messageId: sentMessage.id,
       threadId: sentMessage.threadId,
     },
-    status: "ok" as const,
-  };
-}
-
-export async function startMailboxWatch() {
-  const config = getGmailWatchConfig();
-
-  const accessToken = await getGmailAccessToken(config);
-  const profile = await getGmailProfile(accessToken, config.userId);
-  const watch = await startGmailWatch({
-    accessToken,
-    labelIds: config.labelIds,
-    topicName: config.topicName,
-    userId: config.userId,
-  });
-
-  await writeGmailDemoState({
-    emailAddress: profile.emailAddress,
-    historyId: watch.historyId,
-    watchExpiration: watch.expiration,
-  });
-
-  return {
-    data: {
-      expiration: watch.expiration,
-      historyId: watch.historyId,
-      labelIds: config.labelIds,
-    },
-    status: "ok" as const,
-  };
-}
-
-export async function handleGmailPushPayload(input: unknown, endpointToken: string | null) {
-  if (!isValidPushToken(endpointToken)) {
-    throw mailErrors.GMAIL_PUBSUB_PUSH_INVALID({
-      cause: new Error("Invalid Gmail Pub/Sub verification token"),
-      internal: {
-        handler: "mailboxService.handleGmailPushPayload",
-      },
-    });
-  }
-
-  const parsedPush = gmailPubSubPushSchema.safeParse(input);
-  if (!parsedPush.success) {
-    throw mailErrors.GMAIL_PUBSUB_PUSH_INVALID({
-      cause: new Error(z.prettifyError(parsedPush.error)),
-    });
-  }
-
-  const decodedData = decodeGmailPushData(
-    parsedPush.data.message.data,
-    parsedPush.data.message.messageId,
-  );
-  const parsedData = gmailPushDataSchema.safeParse(decodedData);
-  if (!parsedData.success) {
-    throw mailErrors.GMAIL_PUBSUB_PUSH_INVALID({
-      cause: new Error(z.prettifyError(parsedData.error)),
-      internal: {
-        ...getGmailPushDataDiagnostics(decodedData),
-        messageId: parsedPush.data.message.messageId,
-      },
-    });
-  }
-
-  await writeGmailDemoState({
-    emailAddress: parsedData.data.emailAddress,
-    historyId: parsedData.data.historyId,
-  });
-
-  return {
-    data: parsedData.data,
     status: "ok" as const,
   };
 }
@@ -276,6 +177,63 @@ export function logMailboxError(
   log?.error(evlogError);
 
   return evlogError;
+}
+
+async function getGmailCredentials(authContext: AuthContext, requiredScopes: readonly string[]) {
+  if (!authContext.session) {
+    throw mailErrors.AUTH_REQUIRED({
+      cause: new Error("Missing Better Auth session"),
+    });
+  }
+
+  if (!authContext.getGoogleAccessToken) {
+    throw mailErrors.GMAIL_ACCOUNT_NOT_CONNECTED({
+      cause: new Error("Missing Google access token provider"),
+      internal: {
+        userId: authContext.session.user.id,
+      },
+    });
+  }
+
+  const token = await getGoogleAccessToken(authContext);
+  const missingScope = requiredScopes.find((scope) => !token.scopes.includes(scope));
+
+  if (missingScope) {
+    throw mailErrors.GMAIL_SCOPE_MISSING({
+      cause: new Error(`Missing required Gmail scope: ${missingScope}`),
+      internal: {
+        scope: missingScope,
+        userId: authContext.session.user.id,
+      },
+    });
+  }
+
+  return {
+    accessToken: token.accessToken,
+  };
+}
+
+async function getGoogleAccessToken(authContext: AuthContext) {
+  try {
+    return await requireGoogleAccessToken(authContext);
+  } catch (error) {
+    throw mailErrors.GMAIL_ACCESS_TOKEN_REQUEST_FAILED({
+      cause: getErrorCause(error),
+      internal: {
+        userId: authContext.session?.user.id,
+      },
+    });
+  }
+}
+
+async function requireGoogleAccessToken(authContext: AuthContext) {
+  const token = await authContext.getGoogleAccessToken?.();
+
+  if (!token?.accessToken) {
+    throw new Error("Google access token was empty");
+  }
+
+  return token;
 }
 
 function getMailboxCounts(accessToken: string, userId: string) {
@@ -564,55 +522,6 @@ function getSystemDisplayLabel(labelId: string) {
 
 function getMailboxLabel(email: string) {
   return email.split("@")[0] ?? email;
-}
-
-function isValidPushToken(endpointToken: string | null) {
-  return endpointToken !== null && endpointToken === env.GMAIL_PUBSUB_VERIFICATION_TOKEN;
-}
-
-function decodeGmailPushData(data: string, messageId: string | undefined) {
-  try {
-    return JSON.parse(Buffer.from(data, "base64url").toString("utf8"));
-  } catch (error) {
-    throw mailErrors.GMAIL_PUBSUB_PUSH_INVALID({
-      cause: getErrorCause(error),
-      internal: {
-        messageId,
-      },
-    });
-  }
-}
-
-function getGmailPushDataDiagnostics(data: unknown) {
-  if (!data || typeof data !== "object" || Array.isArray(data)) {
-    return {
-      decodedKeys: [],
-      decodedType: getDiagnosticType(data),
-      emailAddressPresent: false,
-      historyIdType: "missing",
-    };
-  }
-
-  const decodedRecord = data as Record<string, unknown>;
-
-  return {
-    decodedKeys: Object.keys(decodedRecord).sort().slice(0, 10),
-    decodedType: "object",
-    emailAddressPresent: typeof decodedRecord.emailAddress === "string",
-    historyIdType: getDiagnosticType(decodedRecord.historyId),
-  };
-}
-
-function getDiagnosticType(value: unknown) {
-  if (value === null) {
-    return "null";
-  }
-
-  if (Array.isArray(value)) {
-    return "array";
-  }
-
-  return typeof value;
 }
 
 function getMailboxEvlogError(error: unknown, operation: MailboxErrorOperation) {

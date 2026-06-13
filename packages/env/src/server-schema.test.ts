@@ -9,14 +9,8 @@ const requiredEnv = {
   BETTER_AUTH_URL: "http://localhost:4000",
   CORS_ORIGIN: "http://localhost:4000",
   DATABASE_URL: "postgresql://user:password@localhost:5432/test_db",
-  GMAIL_DEMO_STATE_FILE: "/tmp/ai-email-client-gmail-state.json",
-  GMAIL_DEMO_USER: "demo-user@example.com",
-  GMAIL_OAUTH_CLIENT_ID: "test-gmail-client-id",
-  GMAIL_OAUTH_CLIENT_SECRET: "test-gmail-client-secret",
-  GMAIL_OAUTH_REFRESH_TOKEN: "test-gmail-refresh-token",
-  GMAIL_PUBSUB_TOPIC: "projects/sample/topics/mail-push",
-  GMAIL_PUBSUB_VERIFICATION_TOKEN: "test-push-token",
-  GMAIL_WATCH_LABEL_IDS: "INBOX",
+  GOOGLE_OAUTH_CLIENT_ID: "test-google-client-id",
+  GOOGLE_OAUTH_CLIENT_SECRET: "test-google-client-secret",
   OPENROUTER_API_KEY: "sk-or-v1-real-shaped-test",
   LANGSMITH_API_KEY: "lsv2_pt_real-shaped-test",
   LANGSMITH_TRACING: "true",
@@ -36,6 +30,16 @@ test("server env contract requires AI runtime values", () => {
 
   assert.equal(result.success, false);
   assert.equal(result.error?.issues[0]?.path.join("."), "OPENROUTER_API_KEY");
+});
+
+test("server env contract requires Google OAuth values", () => {
+  const result = serverEnvSchema.safeParse({
+    ...requiredEnv,
+    GOOGLE_OAUTH_CLIENT_SECRET: "",
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.error?.issues[0]?.path.join("."), "GOOGLE_OAUTH_CLIENT_SECRET");
 });
 
 test("server env contract pins the only allowed OpenRouter model", () => {

@@ -15,9 +15,6 @@
   - Non-2xx means infra/catastrophic failure only.
   - POST-only for internal data actions unless provider/framework endpoint needs otherwise.
 
-- Exception to the backend API non-2xx rule.
-  - `apps/web/src/app/api/gmail/push/route.ts`: provider-webhook exceptions only; allow non-2xx responses for retry control while keeping internal oRPC routes on 200 error-envelope behavior.
-
 - Logging rules: follow `refs/evlog_practices/`.
   - Use evlog wide structured events.
   - API response stays safe/public.
@@ -37,6 +34,7 @@
   - `pnpm run lint`
   - `pnpm run fmt`
   - `pnpm run fallow`
+    - After audit, remove only `fallow-audit-base-cache-*` worktrees.
   - `pnpm run verify`
 
 ## Non-negotiable

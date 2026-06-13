@@ -1,19 +1,56 @@
 import type { EvlogOrpcContext } from "evlog/orpc";
 import type { NextRequest } from "next/server";
 
-export async function createContext(_req: NextRequest) {
+export type AuthSession = {
+  readonly session: {
+    readonly expiresAt: Date;
+    readonly id: string;
+    readonly token: string;
+    readonly userId: string;
+  };
+  readonly user: {
+    readonly email: string;
+    readonly emailVerified: boolean;
+    readonly id: string;
+    readonly image?: string | null;
+    readonly name: string;
+  };
+};
+
+export type GoogleAccessToken = {
+  readonly accessToken: string;
+  readonly scopes: readonly string[];
+};
+
+export type AuthContext = {
+  readonly getGoogleAccessToken: (() => Promise<GoogleAccessToken>) | null;
+  readonly session: AuthSession | null;
+};
+
+const unauthenticatedContext = {
+  getGoogleAccessToken: null,
+  session: null,
+} satisfies AuthContext;
+
+export async function createContext(
+  _req: NextRequest,
+  authContext: AuthContext = unauthenticatedContext,
+) {
   return {
-    auth: null,
-    session: null,
+    ...authContext,
   };
 }
 
 export type BaseContext = Awaited<ReturnType<typeof createContext>>;
 export type Context = BaseContext & EvlogOrpcContext;
 
-export async function createRpcContext(req: NextRequest, log: EvlogOrpcContext["log"]) {
+export async function createRpcContext(
+  req: NextRequest,
+  log: EvlogOrpcContext["log"],
+  authContext?: AuthContext,
+) {
   return {
-    ...(await createContext(req)),
+    ...(await createContext(req, authContext)),
     log,
   } satisfies Context;
 }

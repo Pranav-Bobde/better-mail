@@ -1,26 +1,13 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import assert from "node:assert/strict";
-import { after, test } from "node:test";
-
-const stateDirectory = await mkdtemp(join(tmpdir(), "code-main-gmail-push-test-"));
-const stateFilePath = join(stateDirectory, "state.json");
-const pushToken = "test-push-token";
+import { afterEach, test } from "node:test";
 
 process.env.APP_URL = "http://localhost:4000";
 process.env.BETTER_AUTH_SECRET = "test-secret-with-at-least-32-chars";
 process.env.BETTER_AUTH_URL = "http://localhost:4000";
 process.env.CORS_ORIGIN = "http://localhost:4000";
 process.env.DATABASE_URL = "postgresql://user:password@localhost:5432/test_db";
-process.env.GMAIL_DEMO_STATE_FILE = stateFilePath;
-process.env.GMAIL_DEMO_USER = "demo-user@example.com";
-process.env.GMAIL_OAUTH_CLIENT_ID = "test-gmail-client-id";
-process.env.GMAIL_OAUTH_CLIENT_SECRET = "test-gmail-client-secret";
-process.env.GMAIL_OAUTH_REFRESH_TOKEN = "test-gmail-refresh-token";
-process.env.GMAIL_PUBSUB_TOPIC = "projects/sample/topics/mail-push";
-process.env.GMAIL_PUBSUB_VERIFICATION_TOKEN = pushToken;
-process.env.GMAIL_WATCH_LABEL_IDS = "INBOX";
+process.env.GOOGLE_OAUTH_CLIENT_ID = "test-google-client-id";
+process.env.GOOGLE_OAUTH_CLIENT_SECRET = "test-google-client-secret";
 process.env.OPENROUTER_API_KEY = "sk-or-v1-real-shaped-test";
 process.env.LANGSMITH_API_KEY = "lsv2_pt_real-shaped-test";
 process.env.LANGSMITH_TRACING = "true";
@@ -29,58 +16,124 @@ process.env.OPENROUTER_MODEL = "openai/gpt-5.4-nano";
 process.env.COPILOTKIT_TELEMETRY_DISABLED = "true";
 process.env.NODE_ENV = "test";
 
-const { handleGmailPushPayload, toMailMessage } = await import("./mailbox-service");
+const { getMailboxData, sendMailboxMessage, toMailMessage } = await import("./mailbox-service");
 const { mailErrors } = await import("./errors");
 const { getMailboxOutputSchema } = await import("./contracts");
 
-after(async () => {
-  await rm(stateDirectory, { force: true, recursive: true });
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
 });
 
-test("accepts Google Pub/Sub wrapped Gmail notification with Base64URL data", async () => {
-  const result = await handleGmailPushPayload(
-    createPushPayload({ historyId: "9876543210" }),
-    pushToken,
-  );
+test("requires a signed-in user before fetching mailbox data", async () => {
+  globalThis.fetch = async () => {
+    throw new Error("fetch should not run without auth");
+  };
 
-  assert.deepEqual(result, {
-    data: {
-      emailAddress: "user@example.com",
-      historyId: "9876543210",
-    },
-    status: "ok",
-  });
-});
-
-test("normalizes numeric Gmail history id from live Pub/Sub payloads", async () => {
-  const result = await handleGmailPushPayload(
-    createPushPayload({ historyId: 9876543210 }),
-    pushToken,
-  );
-
-  assert.deepEqual(result, {
-    data: {
-      emailAddress: "user@example.com",
-      historyId: "9876543210",
-    },
-    status: "ok",
-  });
-
-  const state = JSON.parse(await readFile(stateFilePath, "utf8"));
-  assert.equal(state.historyId, "9876543210");
-});
-
-test("rejects invalid Gmail push token without writing state", async () => {
   await assert.rejects(
-    () => handleGmailPushPayload(createPushPayload({ historyId: "9876543210" }), "wrong-token"),
-    (error: unknown) => {
-      const errorCode = (error as { readonly code?: unknown }).code;
-      return (
-        error instanceof Error &&
-        typeof errorCode === "string" &&
-        errorCode === mailErrors.GMAIL_PUBSUB_PUSH_INVALID.code
-      );
+    () =>
+      getMailboxData(
+        {
+          query: "",
+          view: "all",
+        },
+        {
+          getGoogleAccessToken: null,
+          session: null,
+        },
+      ),
+    (error: unknown) => hasMailErrorCode(error, mailErrors.AUTH_REQUIRED.code),
+  );
+});
+
+test("fetches Gmail mailbox with the Better Auth Google access token", async () => {
+  const mutableRequests: Request[] = [];
+  globalThis.fetch = createMailboxReadFetchMock(mutableRequests);
+
+  const result = await getMailboxData(
+    {
+      query: "from:sender",
+      view: "unread",
     },
+    createSignedInGmailContext("better-auth-read-token", [
+      "email",
+      "profile",
+      "https://www.googleapis.com/auth/gmail.readonly",
+    ]),
+  );
+
+  assert.equal(result.status, "ok");
+  assert.equal(result.data.account.email, "demo-user@example.com");
+  assert.equal(result.data.source, "gmail");
+  assert.equal(result.data.messages.length, 1);
+  assert.equal(result.data.messages[0]?.subject, "HTML hello");
+  assert.equal(result.data.counts.inbox, 11);
+  assert.equal(result.data.counts.unread, 5);
+  assert.equal(result.data.counts.archive, 7);
+  assert.equal(result.data.counts.shopping, 3);
+  assert.ok(mutableRequests.length > 0);
+});
+
+test("sends Gmail with the Better Auth Google access token", async () => {
+  const mutableRequests: Request[] = [];
+
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    mutableRequests.push(request);
+
+    if (request.url.includes("oauth2.googleapis.com")) {
+      throw new Error("demo refresh-token flow should not run");
+    }
+
+    return Response.json({
+      id: "sent-message-id",
+      labelIds: ["SENT"],
+      threadId: "sent-thread-id",
+    });
+  };
+
+  const result = await sendMailboxMessage(
+    {
+      body: "Real-shaped test body",
+      subject: "Real-shaped test subject",
+      to: "receiver@example.com",
+    },
+    createSignedInGmailContext("better-auth-access-token"),
+  );
+
+  assert.deepEqual(result, {
+    data: {
+      messageId: "sent-message-id",
+      threadId: "sent-thread-id",
+    },
+    status: "ok",
+  });
+
+  const sendRequest = mutableRequests[0];
+  assert.ok(sendRequest);
+  assert.equal(sendRequest.url, "https://gmail.googleapis.com/gmail/v1/users/me/messages/send");
+  assert.equal(sendRequest.headers.get("authorization"), "Bearer better-auth-access-token");
+});
+
+test("requires the Gmail send scope before sending mail", async () => {
+  globalThis.fetch = async () => {
+    throw new Error("fetch should not run without Gmail send scope");
+  };
+
+  await assert.rejects(
+    () =>
+      sendMailboxMessage(
+        {
+          body: "Real-shaped test body",
+          subject: "Real-shaped test subject",
+          to: "receiver@example.com",
+        },
+        createSignedInGmailContext("better-auth-access-token", [
+          "https://www.googleapis.com/auth/gmail.readonly",
+        ]),
+      ),
+    (error: unknown) => hasMailErrorCode(error, mailErrors.GMAIL_SCOPE_MISSING.code),
   );
 });
 
@@ -125,22 +178,6 @@ test("maps nested real-shaped Gmail HTML message details", () => {
 
   assertMailboxMessageParses(message);
 });
-
-function createPushPayload(input: { readonly historyId: number | string }) {
-  const notification = {
-    emailAddress: "user@example.com",
-    historyId: input.historyId,
-  };
-
-  return {
-    message: {
-      data: Buffer.from(JSON.stringify(notification), "utf8").toString("base64url"),
-      messageId: "pubsub-message-1",
-      publishTime: "2026-06-11T19:13:55.749Z",
-    },
-    subscription: "projects/example/subscriptions/gmail-push",
-  };
-}
 
 function createHtmlGmailMessage() {
   return {
@@ -255,6 +292,115 @@ function createLabelMap() {
   ]);
 }
 
+function createUserLabels() {
+  return [createLabel("Label_Important", "Important", "user")];
+}
+
+function createMailboxReadFetchMock(mutableRequests: Request[]) {
+  return async (input: string | URL | Request, init?: RequestInit) => {
+    const request = new Request(input, init);
+    mutableRequests.push(request);
+    assert.equal(request.headers.get("authorization"), "Bearer better-auth-read-token");
+
+    return createMailboxReadResponse(request);
+  };
+}
+
+function createMailboxReadResponse(request: Request) {
+  const url = new URL(request.url);
+  const exactResponse = createExactMailboxReadResponse(url);
+  if (exactResponse) {
+    return exactResponse;
+  }
+
+  if (url.pathname === "/gmail/v1/users/me/messages") {
+    return createMailboxListResponse(url);
+  }
+
+  return createGmailLabelCountResponseFromUrl(url, request.url);
+}
+
+function createExactMailboxReadResponse(url: URL) {
+  const exactResponses = new Map<string, () => Response>([
+    ["/gmail/v1/users/me/profile", () => Response.json(createGmailProfileResponse())],
+    ["/gmail/v1/users/me/labels", () => Response.json(createGmailLabelsResponse())],
+    [
+      "/gmail/v1/users/me/messages/18c2f5f6c5f9f001",
+      () => Response.json(createGmailMessageDetailResponse(url)),
+    ],
+  ]);
+
+  return exactResponses.get(url.pathname)?.();
+}
+
+function createGmailLabelCountResponseFromUrl(url: URL, requestUrl: string) {
+  const labelId = url.pathname.match(/^\/gmail\/v1\/users\/me\/labels\/([^/]+)$/)?.[1];
+  if (!labelId) {
+    throw new Error(`Unexpected Gmail request: ${requestUrl}`);
+  }
+
+  return Response.json(createGmailLabelCountResponse(labelId));
+}
+
+function createGmailProfileResponse() {
+  return {
+    emailAddress: "demo-user@example.com",
+    historyId: "176001",
+    messagesTotal: 42,
+    threadsTotal: 24,
+  };
+}
+
+function createGmailLabelsResponse() {
+  return {
+    labels: [...systemLabelIds.map((id) => createLabel(id, id, "system")), ...createUserLabels()],
+  };
+}
+
+function createGmailMessageDetailResponse(url: URL) {
+  assert.equal(url.searchParams.get("format"), "full");
+  return createHtmlGmailMessage();
+}
+
+function createMailboxListResponse(url: URL) {
+  assert.equal(url.searchParams.get("includeSpamTrash"), "false");
+  const query = url.searchParams.get("q");
+
+  if (query === "from:sender is:unread") {
+    assert.equal(url.searchParams.get("maxResults"), "20");
+    assert.deepEqual(url.searchParams.getAll("labelIds"), ["INBOX", "UNREAD"]);
+    return Response.json({
+      messages: [{ id: "18c2f5f6c5f9f001", threadId: "18c2f5f6c5f9f001" }],
+      resultSizeEstimate: 1,
+    });
+  }
+
+  assert.equal(url.searchParams.get("maxResults"), "1");
+  return Response.json({
+    resultSizeEstimate: query === "-in:inbox -in:sent -in:drafts -in:trash -in:spam" ? 7 : 3,
+  });
+}
+
+function createGmailLabelCountResponse(labelId: string) {
+  return {
+    ...createLabel(labelId, labelId, "system"),
+    messagesTotal: getSystemLabelMessageTotal(labelId),
+    messagesUnread: labelId === "UNREAD" ? 5 : 0,
+  };
+}
+
+function getSystemLabelMessageTotal(labelId: string) {
+  if (labelId === "INBOX") {
+    return 11;
+  }
+
+  if (labelId === "UNREAD") {
+    return 5;
+  }
+
+  return 2;
+}
+
 function createLabel(id: string, name: string, type: "system" | "user") {
   return {
     id,
@@ -264,6 +410,19 @@ function createLabel(id: string, name: string, type: "system" | "user") {
     type,
   };
 }
+
+const systemLabelIds = [
+  "DRAFT",
+  "CATEGORY_FORUMS",
+  "INBOX",
+  "SPAM",
+  "CATEGORY_PROMOTIONS",
+  "SENT",
+  "CATEGORY_SOCIAL",
+  "TRASH",
+  "UNREAD",
+  "CATEGORY_UPDATES",
+] as const;
 
 function assertMailboxMessageParses(message: ReturnType<typeof toMailMessage>) {
   assert.equal(
@@ -295,4 +454,41 @@ function assertMailboxMessageParses(message: ReturnType<typeof toMailMessage>) {
 
 function encodeGmailBody(input: string) {
   return Buffer.from(input, "utf8").toString("base64url");
+}
+
+function hasMailErrorCode(error: unknown, code: string) {
+  const errorCode = (error as { readonly code?: unknown }).code;
+  return error instanceof Error && typeof errorCode === "string" && errorCode === code;
+}
+
+function createSignedInGmailContext(
+  accessToken: string,
+  scopes: readonly string[] = [
+    "email",
+    "profile",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+  ],
+) {
+  return {
+    getGoogleAccessToken: async () => ({
+      accessToken,
+      scopes,
+    }),
+    session: {
+      session: {
+        expiresAt: new Date("2026-06-13T12:00:00.000Z"),
+        id: "session-id",
+        token: "session-token",
+        userId: "user-id",
+      },
+      user: {
+        email: "demo-user@example.com",
+        emailVerified: true,
+        id: "user-id",
+        image: null,
+        name: "Demo User",
+      },
+    },
+  };
 }

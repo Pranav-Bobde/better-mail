@@ -35,18 +35,10 @@ BETTER_AUTH_SECRET="at-least-32-characters-secret-value"
 BETTER_AUTH_URL="http://localhost:4000"
 CORS_ORIGIN="http://localhost:4000"
 DATABASE_URL="postgresql://user:password@localhost:5432/your_db"
-GMAIL_DEMO_STATE_FILE="/tmp/code-main-gmail-demo-state.json"
 
-# Required Gmail mailbox credentials.
-GMAIL_DEMO_USER="me"
-GMAIL_OAUTH_CLIENT_ID="..."
-GMAIL_OAUTH_CLIENT_SECRET="..."
-GMAIL_OAUTH_REFRESH_TOKEN="..."
-
-# Required for push config, set even if you only run list/send.
-GMAIL_PUBSUB_TOPIC="projects/<project-id>/topics/<topic-id>"
-GMAIL_PUBSUB_VERIFICATION_TOKEN="..."
-GMAIL_WATCH_LABEL_IDS="INBOX"
+# Required Google OAuth credentials for Better Auth + Gmail.
+GOOGLE_OAUTH_CLIENT_ID="..."
+GOOGLE_OAUTH_CLIENT_SECRET="..."
 ```
 
 Then, run the development server:
@@ -57,9 +49,11 @@ pnpm run dev
 
 Open [http://localhost:4000](http://localhost:4000) in your browser to see the fullstack application.
 
-### Optional Database Setup
+### Required Database Setup
 
-This project keeps the Prisma/PostgreSQL scaffold for future features.
+This project uses Prisma/PostgreSQL for Better Auth sessions and Google OAuth
+tokens. Set `DATABASE_URL`, then run the Prisma migration commands before using
+login and Gmail mailbox flows.
 
 ## UI Customization
 
