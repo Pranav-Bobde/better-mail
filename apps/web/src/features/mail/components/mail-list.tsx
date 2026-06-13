@@ -5,6 +5,7 @@ import { ScrollArea } from "@code-main/ui/components/scroll-area";
 import { cn } from "@code-main/ui/lib/utils";
 
 import type { Mail } from "@/features/mail/components/mail-data";
+import { cleanMailPreviewText } from "@/features/mail/components/mail-text";
 
 export function MailList({
   items,
@@ -92,22 +93,7 @@ function MailListItemHeader({
 
 function getPreviewText(item: Mail) {
   const source = item.snippet?.trim() ? item.snippet : item.text;
-  return cleanPreviewText(source).substring(0, 280);
-}
-
-// Gmail snippets are HTML-entity-encoded; plain-text bodies can leak markup or
-// CSS. Strip both to a readable single line for the list preview.
-function cleanPreviewText(raw: string) {
-  return raw
-    .replace(/<[^>]*>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&#39;|&apos;|&rsquo;/gi, "’")
-    .replace(/&quot;/gi, '"')
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/\s+/g, " ")
-    .trim();
+  return cleanMailPreviewText(source).substring(0, 280);
 }
 
 function selectedDateClassName(selected: boolean) {

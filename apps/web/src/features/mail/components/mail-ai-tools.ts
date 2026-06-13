@@ -34,8 +34,28 @@ export const filterEmailParameters = z.object({
   view: z.enum(mailViewValues).optional().describe("All or unread inbox view."),
 });
 
+export const forwardEmailParameters = z.object({
+  to: z
+    .email({ error: "Recipient email is required." })
+    .describe("Forward recipient email address."),
+  note: z
+    .string()
+    .trim()
+    .min(1, { error: "Note cannot be empty." })
+    .optional()
+    .describe("Optional note added above the forwarded message."),
+});
+
 export type DraftEmailInput = z.infer<typeof draftEmailParameters>;
 export type EmailFilterInput = z.infer<typeof filterEmailParameters>;
+export type ForwardEmailInput = z.infer<typeof forwardEmailParameters>;
+type ForwardSource = {
+  readonly date: string;
+  readonly email: string;
+  readonly name: string;
+  readonly subject: string;
+  readonly text: string;
+};
 export type MailView = (typeof mailViewValues)[number];
 export type ComposeState = {
   readonly body: string;
@@ -85,4 +105,22 @@ function formatSenderQuery(sender: string | undefined) {
 
 function formatDateRangeQuery(dateRange: EmailFilterInput["dateRange"]) {
   return dateRange ? dateRangeQueryByValue[dateRange] : "";
+}
+
+export function getForwardSubject(subject: string) {
+  return /^fwd:/i.test(subject.trim()) ? subject : `Fwd: ${subject}`;
+}
+
+export function createForwardBody(mail: ForwardSource, note?: string) {
+  const forwardedBlock = [
+    "---------- Forwarded message ---------",
+    `From: ${mail.name} <${mail.email}>`,
+    `Date: ${mail.date}`,
+    `Subject: ${mail.subject}`,
+    "",
+    mail.text,
+  ].join("\n");
+
+  const trimmedNote = note?.trim();
+  return trimmedNote ? `${trimmedNote}\n\n${forwardedBlock}` : forwardedBlock;
 }

@@ -3,6 +3,7 @@ import { format } from "date-fns";
 import {
   Archive,
   ArchiveX,
+  ChevronDown,
   Clock,
   ExternalLink,
   Forward,
@@ -27,31 +28,40 @@ import {
 import { Input } from "@code-main/ui/components/input";
 import { Label } from "@code-main/ui/components/label";
 import { Separator } from "@code-main/ui/components/separator";
+import { Skeleton } from "@code-main/ui/components/skeleton";
 import { Switch } from "@code-main/ui/components/switch";
 import { Textarea } from "@code-main/ui/components/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@code-main/ui/components/tooltip";
+import { cn } from "@code-main/ui/lib/utils";
 
 import type { ComposeState } from "@/features/mail/components/mail-ai-tools";
 import type { Mail } from "@/features/mail/components/mail-data";
+import { cleanMailPreviewText } from "@/features/mail/components/mail-text";
 
 export function MailDisplay({
   compose,
   composeNotice,
   isSending,
+  isThreadLoading,
   mail,
   onCloseCompose,
   onComposeChange,
+  onForward,
   onSendCompose,
   onSendReply,
+  threadMessages,
 }: {
   readonly compose: ComposeState;
   readonly composeNotice: string;
   readonly isSending: boolean;
+  readonly isThreadLoading: boolean;
   readonly mail: Mail | null;
   readonly onCloseCompose: () => void;
   readonly onComposeChange: React.Dispatch<React.SetStateAction<ComposeState>>;
+  readonly onForward: () => void;
   readonly onSendCompose: () => void;
   readonly onSendReply: (mail: Mail, body: string) => void;
+  readonly threadMessages: readonly Mail[] | null;
 }) {
   if (compose.open) {
     return (
@@ -68,7 +78,7 @@ export function MailDisplay({
 
   return (
     <div className="flex h-full min-w-0 flex-col">
-      <div className="flex items-center overflow-x-auto p-2">
+      <div className="flex shrink-0 items-center overflow-x-auto p-2">
         <div className="flex items-center gap-1">
           <ToolButton disabled={!mail} label="Archive">
             <Archive className="size-4" />
@@ -97,7 +107,7 @@ export function MailDisplay({
             <ReplyAll className="size-4" />
             <span className="sr-only">Reply all</span>
           </ToolButton>
-          <ToolButton disabled={!mail} label="Forward">
+          <ToolButton disabled={!mail} label="Forward" onClick={onForward}>
             <Forward className="size-4" />
             <span className="sr-only">Forward</span>
           </ToolButton>
@@ -118,7 +128,13 @@ export function MailDisplay({
       </div>
       <Separator />
       {mail ? (
-        <SelectedMail isSending={isSending} mail={mail} onSendReply={onSendReply} />
+        <SelectedMail
+          isSending={isSending}
+          isThreadLoading={isThreadLoading}
+          mail={mail}
+          onSendReply={onSendReply}
+          threadMessages={threadMessages}
+        />
       ) : (
         <div className="p-8 text-center text-muted-foreground">No message selected</div>
       )}
@@ -211,15 +227,19 @@ function canSendCompose(compose: ComposeState, isSending: boolean) {
 function ToolButton({
   label,
   disabled,
+  onClick,
   children,
 }: {
   readonly label: string;
   readonly disabled?: boolean;
+  readonly onClick?: () => void;
   readonly children: ReactNode;
 }) {
   return (
     <Tooltip>
-      <TooltipTrigger render={<Button disabled={disabled} size="icon" variant="ghost" />}>
+      <TooltipTrigger
+        render={<Button disabled={disabled} onClick={onClick} size="icon" variant="ghost" />}
+      >
         {children}
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
@@ -229,31 +249,145 @@ function ToolButton({
 
 function SelectedMail({
   isSending,
+  isThreadLoading,
   mail,
   onSendReply,
+  threadMessages,
 }: {
   readonly isSending: boolean;
+  readonly isThreadLoading: boolean;
   readonly mail: Mail;
   readonly onSendReply: (mail: Mail, body: string) => void;
+  readonly threadMessages: readonly Mail[] | null;
+}) {
+  // Wait for the conversation to load before committing to a layout, so opening
+  // a thread doesn't flash the single-message view and snap to the thread view.
+  if (isThreadLoading) {
+    return <MailDetailSkeleton />;
+  }
+
+  const conversation = getConversation(threadMessages);
+  // Gmail returns thread messages oldest-first, so the reply targets the last.
+  const replyTarget = conversation?.at(-1) ?? mail;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {conversation ? (
+        <MailThread messages={conversation} selectedId={mail.id} />
+      ) : (
+        <SingleMailBody mail={mail} />
+      )}
+      <Separator className="mt-auto" />
+      <ThreadReplyForm
+        isSending={isSending}
+        onSendReply={onSendReply}
+        replyTarget={replyTarget}
+        resetKey={mail.id}
+      />
+    </div>
+  );
+}
+
+// Only treat it as a conversation when the thread actually has more than one
+// message; single-message threads keep the original single-message layout.
+function getConversation(threadMessages: readonly Mail[] | null) {
+  if (threadMessages && threadMessages.length > 1) {
+    return threadMessages;
+  }
+
+  return null;
+}
+
+function ThreadReplyForm({
+  isSending,
+  onSendReply,
+  replyTarget,
+  resetKey,
+}: {
+  readonly isSending: boolean;
+  readonly onSendReply: (mail: Mail, body: string) => void;
+  readonly replyTarget: Mail;
+  readonly resetKey: string;
 }) {
   const [replyBody, setReplyBody] = React.useState("");
   const canSend = replyBody.trim().length > 0 && !isSending;
 
   React.useEffect(() => {
     setReplyBody("");
-  }, [mail.id]);
+  }, [resetKey]);
 
   return (
-    <div className="flex flex-1 flex-col">
+    <div className="p-4">
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+
+          if (canSend) {
+            onSendReply(replyTarget, replyBody.trim());
+            setReplyBody("");
+          }
+        }}
+      >
+        <div className="grid gap-4">
+          <Textarea
+            className="p-4"
+            key={resetKey}
+            onChange={(event) => setReplyBody(event.currentTarget.value)}
+            placeholder={`Reply ${replyTarget.name}...`}
+            value={replyBody}
+          />
+          <div className="flex items-center">
+            <Label className="flex items-center gap-2 text-xs font-normal" htmlFor="mute">
+              <Switch aria-label="Mute thread" id="mute" /> Mute this thread
+            </Label>
+            <Button className="ml-auto" disabled={!canSend} size="sm" type="submit">
+              Send
+            </Button>
+          </div>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function MailDetailSkeleton() {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex items-start p-4">
+        <div className="flex items-start gap-4">
+          <Skeleton className="size-10 shrink-0 rounded-full" />
+          <div className="grid gap-2 pt-1">
+            <Skeleton className="h-3.5 w-36 rounded-md" />
+            <Skeleton className="h-3 w-52 rounded-md" />
+            <Skeleton className="h-3 w-44 rounded-md" />
+          </div>
+        </div>
+        <Skeleton className="ml-auto h-3 w-28 rounded-md" />
+      </div>
+      <Separator />
+      <div className="flex-1 space-y-3 p-4">
+        <Skeleton className="h-3 w-[92%] rounded-md" />
+        <Skeleton className="h-3 w-[88%] rounded-md" />
+        <Skeleton className="h-3 w-[95%] rounded-md" />
+        <Skeleton className="h-3 w-[60%] rounded-md" />
+        <Skeleton className="h-3 w-[78%] rounded-md" />
+        <Skeleton className="h-3 w-[40%] rounded-md" />
+      </div>
+      <Separator className="mt-auto" />
+      <div className="p-4">
+        <Skeleton className="h-20 w-full rounded-md" />
+      </div>
+    </div>
+  );
+}
+
+function SingleMailBody({ mail }: { readonly mail: Mail }) {
+  return (
+    <>
       <div className="flex items-start p-4">
         <div className="flex items-start gap-4 text-sm">
           <Avatar>
-            <AvatarFallback>
-              {mail.name
-                .split(" ")
-                .map((chunk) => chunk[0])
-                .join("")}
-            </AvatarFallback>
+            <AvatarFallback>{getInitials(mail.name)}</AvatarFallback>
           </Avatar>
           <div className="grid gap-1">
             <div className="font-semibold">{mail.name}</div>
@@ -271,39 +405,152 @@ function SelectedMail({
       <div className="min-h-0 flex-1">
         <EmailBody mail={mail} />
       </div>
-      <Separator className="mt-auto" />
-      <div className="p-4">
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
+    </>
+  );
+}
 
-            if (canSend) {
-              onSendReply(mail, replyBody.trim());
-              setReplyBody("");
-            }
-          }}
-        >
-          <div className="grid gap-4">
-            <Textarea
-              className="p-4"
-              key={mail.id}
-              onChange={(event) => setReplyBody(event.currentTarget.value)}
-              placeholder={`Reply ${mail.name}...`}
-              value={replyBody}
-            />
-            <div className="flex items-center">
-              <Label className="flex items-center gap-2 text-xs font-normal" htmlFor="mute">
-                <Switch aria-label="Mute thread" id="mute" /> Mute this thread
-              </Label>
-              <Button className="ml-auto" disabled={!canSend} size="sm" type="submit">
-                Send
-              </Button>
-            </div>
-          </div>
-        </form>
+function MailThread({
+  messages,
+  selectedId,
+}: {
+  readonly messages: readonly Mail[];
+  readonly selectedId: string;
+}) {
+  const latestMessage = messages.at(-1);
+
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="flex items-center gap-2 px-4 pt-4 pb-2">
+        <h2 className="line-clamp-1 text-sm font-semibold">{latestMessage?.subject}</h2>
+        <span className="shrink-0 text-xs text-muted-foreground">{messages.length} messages</span>
+      </div>
+      <div className="flex flex-col gap-2 p-4 pt-0">
+        {messages.map((message) => (
+          <ThreadMessage
+            // The newest message and the message the user opened start expanded.
+            defaultExpanded={message.id === latestMessage?.id || message.id === selectedId}
+            key={message.id}
+            message={message}
+          />
+        ))}
       </div>
     </div>
   );
+}
+
+function ThreadMessage({
+  defaultExpanded,
+  message,
+}: {
+  readonly defaultExpanded: boolean;
+  readonly message: Mail;
+}) {
+  const [expanded, setExpanded] = React.useState(defaultExpanded);
+
+  return (
+    <div className="overflow-hidden rounded-lg border">
+      <button
+        aria-expanded={expanded}
+        className="flex w-full items-start gap-3 p-3 text-left hover:bg-accent"
+        onClick={() => setExpanded((value) => !value)}
+        type="button"
+      >
+        <Avatar className="size-7">
+          <AvatarFallback className="text-xs">{getInitials(message.name)}</AvatarFallback>
+        </Avatar>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-sm font-semibold">{message.name}</span>
+            <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+              {format(new Date(message.date), "PP")}
+            </span>
+            <ChevronDown
+              className={cn(
+                "size-4 shrink-0 text-muted-foreground transition-transform duration-200",
+                expanded && "rotate-180",
+              )}
+            />
+          </div>
+          <span className="line-clamp-1 text-xs text-muted-foreground">
+            {expanded ? message.email : getThreadPreview(message)}
+          </span>
+        </div>
+      </button>
+      {/* Animate height with a grid-rows 0fr→1fr transition so expand/collapse
+          stays smooth while the body keeps its natural (auto) height. */}
+      <div
+        className={cn(
+          "grid transition-[grid-template-rows] duration-200 ease-out",
+          expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+        )}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <Separator />
+          <ThreadMessageBody mail={message} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ThreadMessageBody({ mail }: { readonly mail: Mail }) {
+  const html = mail.html?.trim();
+
+  if (html) {
+    return <ThreadEmailHtmlFrame html={html} />;
+  }
+
+  const bounce = parseBounceNotice(mail.text);
+
+  if (bounce) {
+    return <BounceNotice bounce={bounce} />;
+  }
+
+  return <div className="p-4 text-sm whitespace-pre-wrap">{mail.text}</div>;
+}
+
+// Thread messages stack in one scroll column, so the HTML frame auto-sizes to
+// its content instead of filling a fixed pane like the single-message view.
+function ThreadEmailHtmlFrame({ html }: { readonly html: string }) {
+  const [srcDoc, setSrcDoc] = React.useState("");
+  const [height, setHeight] = React.useState(200);
+  const frameRef = React.useRef<HTMLIFrameElement>(null);
+
+  React.useEffect(() => {
+    setSrcDoc(buildEmailSrcDoc(html));
+  }, [html]);
+
+  const syncHeight = React.useCallback(() => {
+    const body = frameRef.current?.contentDocument?.body;
+    if (body) {
+      setHeight(body.scrollHeight + 8);
+    }
+  }, []);
+
+  return (
+    <iframe
+      className="w-full bg-white"
+      onLoad={syncHeight}
+      ref={frameRef}
+      referrerPolicy="no-referrer"
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+      srcDoc={srcDoc}
+      style={{ height }}
+      title="Email content"
+    />
+  );
+}
+
+function getInitials(name: string) {
+  return name
+    .split(" ")
+    .map((chunk) => chunk[0])
+    .join("");
+}
+
+function getThreadPreview(mail: Mail) {
+  const source = mail.snippet?.trim() ? mail.snippet : mail.text;
+  return cleanMailPreviewText(source);
 }
 
 function EmailBody({ mail }: { readonly mail: Mail }) {

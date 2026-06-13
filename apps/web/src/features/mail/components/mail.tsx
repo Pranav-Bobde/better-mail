@@ -1,6 +1,6 @@
 "use client";
 
-import { type MailboxData } from "@code-main/api/mail/contracts";
+import { type GetThreadOutput, type MailboxData } from "@code-main/api/mail/contracts";
 import {
   CopilotChatConfigurationProvider,
   CopilotKitProvider,
@@ -49,14 +49,18 @@ import {
 } from "@/features/mail/components/ask-ai-panel";
 import {
   createAiSearchQuery,
+  createForwardBody,
   draftEmailParameters,
   emptyComposeState,
   filterEmailParameters,
+  forwardEmailParameters,
   getClientMailSearchQuery,
   getAiMailView,
+  getForwardSubject,
   type ComposeState,
   type DraftEmailInput,
   type EmailFilterInput,
+  type ForwardEmailInput,
   type MailView,
 } from "@/features/mail/components/mail-ai-tools";
 import { mails, type Mail as MailItem } from "@/features/mail/components/mail-data";
@@ -68,6 +72,7 @@ import {
   type MailLayout,
 } from "@/features/mail/components/mail-layout";
 import { MailList } from "@/features/mail/components/mail-list";
+import { MailLoading } from "@/features/mail/components/mail-loading";
 import { Nav, type NavLink } from "@/features/mail/components/nav";
 import { ModeToggle } from "@/shared/components/mode-toggle";
 import { authClient } from "@/shared/utils/auth-client";
@@ -179,6 +184,7 @@ function MailWorkspace({
     errorMessage: mailboxErrorMessage,
     isFetching: isMailboxFetching,
     mailbox,
+    isInitialLoading: isMailboxInitialLoading,
   } = useMailboxData(searchQuery, view);
   const sendMailMutation = useSendReplyMutation();
   const mailboxViewState = getMailboxViewState(mailbox, mailboxErrorMessage);
@@ -190,6 +196,7 @@ function MailWorkspace({
   const primaryLinks = React.useMemo(() => createPrimaryLinks(counts), [counts]);
   const categoryLinks = React.useMemo(() => createCategoryLinks(counts), [counts]);
   const selectedMail = getSelectedMail(activeMails, selected);
+  const { isLoading: isThreadLoading, messages: threadMessages } = useThreadMessages(selectedMail);
   const openCompose = React.useCallback(() => {
     setCompose({
       ...emptyComposeState,
@@ -261,6 +268,23 @@ function MailWorkspace({
     [selectedMail],
   );
 
+  // A forward starts a brand-new thread to a new recipient: open compose with a
+  // quoted "Fwd:" template and no reply/thread context.
+  const forwardSelectedMail = React.useCallback(() => {
+    if (!selectedMail) {
+      return;
+    }
+
+    setActiveDraft(null);
+    setCompose({
+      body: createForwardBody(selectedMail),
+      open: true,
+      subject: getForwardSubject(selectedMail.subject),
+      to: "",
+    });
+    setComposeNotice("");
+  }, [selectedMail]);
+
   const sendDraft = React.useCallback(
     async (draft: DraftEmailInput) => {
       const nextCompose = createComposeStateFromDraft(draft, selectedMail);
@@ -309,9 +333,7 @@ function MailWorkspace({
 
   useFrontendTool(
     {
-      description: selectedMail
-        ? `Draft an email and show a review preview in the Ask AI panel. Use selected email only when user says selected/current/this email. Selected email is "${selectedMail.subject}" from ${selectedMail.email}. Do not open the compose form or send — the user opens or sends from the preview.`
-        : "Draft an email and show a review preview in the Ask AI panel. Do not open the compose form or send — the user opens or sends from the preview.",
+      description: getDraftToolDescription(selectedMail),
       followUp: false,
       handler: async (input: DraftEmailInput) => {
         setActiveDraft(input);
@@ -352,6 +374,35 @@ function MailWorkspace({
     [applyEmailFilters],
   );
 
+  useFrontendTool(
+    {
+      description: getForwardToolDescription(selectedMail),
+      followUp: false,
+      handler: async (input: ForwardEmailInput) => {
+        if (!selectedMail) {
+          return "no_selected_email: Ask the user to open the email they want to forward first.";
+        }
+
+        setIsAiOpen(true);
+        return `forward_ready: Forward preview ready for ${input.to}. Awaiting user review.`;
+      },
+      name: "forwardEmail",
+      parameters: forwardEmailParameters,
+      render: (props) => (
+        <DraftEmailPreviewCard
+          {...props}
+          args={createForwardDraftArgs(props.args, selectedMail)}
+          draftDecisions={draftDecisions}
+          kind="forward"
+          onDecision={markDraftDecision}
+          onOpenDraft={openDraftInCompose}
+          onSendDraft={sendDraft}
+        />
+      ),
+    },
+    [draftDecisions, markDraftDecision, openDraftInCompose, selectedMail, sendDraft],
+  );
+
   async function sendCurrentCompose() {
     const result = draftEmailParameters.safeParse(compose);
 
@@ -374,6 +425,12 @@ function MailWorkspace({
     } catch {
       setComposeNotice("Email send failed. Check the toast for details.");
     }
+  }
+
+  // Show a clean loading state on first load instead of flashing demo/fallback
+  // data before the real mailbox arrives.
+  if (isMailboxInitialLoading) {
+    return <MailLoading />;
   }
 
   return (
@@ -421,9 +478,11 @@ function MailWorkspace({
             compose={compose}
             composeNotice={composeNotice}
             isSending={sendMailMutation.isPending}
+            isThreadLoading={isThreadLoading}
             mail={selectedMail}
             onCloseCompose={closeCompose}
             onComposeChange={setCompose}
+            onForward={forwardSelectedMail}
             onSendCompose={() => void sendCurrentCompose()}
             onSendReply={(mail, body) => {
               sendMailMutation.mutate({
@@ -433,6 +492,7 @@ function MailWorkspace({
                 to: mail.email,
               });
             }}
+            threadMessages={threadMessages}
           />
         </ResizablePanel>
       </ResizablePanelGroup>
@@ -755,6 +815,8 @@ function useMailboxData(searchQuery: string, view: MailView) {
 
   return {
     errorMessage,
+    // True only for the very first load, before any response has arrived.
+    isInitialLoading: mailboxQuery.isLoading,
     isFetching: mailboxQuery.isFetching,
     mailbox,
   };
@@ -794,6 +856,36 @@ function getMailboxQueryErrorMessage(
 
   if (data?.status === "error") {
     return data.error;
+  }
+
+  return null;
+}
+
+function useThreadMessages(selectedMail: MailItem | null) {
+  const threadId = selectedMail?.threadId ?? "";
+  const threadQuery = useQuery(
+    orpc.mail.getThread.queryOptions({
+      enabled: threadId.length > 0,
+      input: { threadId },
+      meta: {
+        silentError: true,
+      },
+      retry: false,
+      staleTime: 5_000,
+    }),
+  );
+
+  return {
+    // Loading the conversation for a freshly selected message (cached threads
+    // resolve instantly, so this is only true on a genuine fetch).
+    isLoading: threadQuery.isLoading && threadId.length > 0,
+    messages: getThreadMessages(threadQuery.data),
+  };
+}
+
+function getThreadMessages(result: GetThreadOutput | undefined) {
+  if (result?.status === "ok") {
+    return result.data.messages;
   }
 
   return null;
@@ -964,6 +1056,40 @@ function createComposeStateFromDraft(draft: DraftEmailInput, selectedMail: MailI
     threadId: replyContext?.threadId,
     to: draft.to,
   } satisfies ComposeState;
+}
+
+function getDraftToolDescription(selectedMail: MailItem | null) {
+  if (!selectedMail) {
+    return "Draft an email and show a review preview in the Ask AI panel. Do not open the compose form or send — the user opens or sends from the preview.";
+  }
+
+  return `Draft an email and show a review preview in the Ask AI panel. Use selected email only when user says selected/current/this email. Selected email is "${selectedMail.subject}" from ${selectedMail.email}. Do not open the compose form or send — the user opens or sends from the preview.`;
+}
+
+function getForwardToolDescription(selectedMail: MailItem | null) {
+  if (!selectedMail) {
+    return "Forward the open email. If no email is open, ask the user to open the email they want to forward first.";
+  }
+
+  return `Forward the selected email to a new recipient and show a review preview in the Ask AI panel. The selected email is "${selectedMail.subject}" from ${selectedMail.email}; its content is quoted automatically. Do not send — the user opens or sends from the preview.`;
+}
+
+// Turn the forward tool args ({ to, note }) into a draft-preview shape by
+// quoting the selected email, so the assistant reuses the same review card.
+function createForwardDraftArgs(
+  args: Partial<ForwardEmailInput>,
+  selectedMail: MailItem | null,
+): Partial<DraftEmailInput> {
+  if (!selectedMail) {
+    return { responseText: args.note, to: args.to };
+  }
+
+  return {
+    body: createForwardBody(selectedMail, args.note),
+    responseText: args.note,
+    subject: getForwardSubject(selectedMail.subject),
+    to: args.to,
+  };
 }
 
 function getReplyContext(draft: DraftEmailInput, selectedMail: MailItem | null) {

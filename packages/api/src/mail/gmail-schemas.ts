@@ -58,6 +58,13 @@ export const gmailMessageResponseSchema = z.object({
   threadId: z.string(),
 });
 
+export const gmailThreadResponseSchema = z.object({
+  historyId: z.string().optional(),
+  id: z.string(),
+  // A Gmail thread always carries at least its originating message.
+  messages: z.tuple([gmailMessageResponseSchema]).rest(gmailMessageResponseSchema),
+});
+
 export const gmailLabelsListResponseSchema = z.object({
   labels: z
     .array(

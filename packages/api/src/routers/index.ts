@@ -5,6 +5,8 @@ import {
   getMailboxOutputSchema,
 } from "../functions/mail/getMailbox/constants";
 import { runGetMailbox } from "../functions/mail/getMailbox/run";
+import { getThreadInputSchema, getThreadOutputSchema } from "../functions/mail/getThread/constants";
+import { runGetThread } from "../functions/mail/getThread/run";
 import { sendMailInputSchema, sendMailOutputSchema } from "../functions/mail/send/constants";
 import { runSendMail } from "../functions/mail/send/run";
 import { createRpcSuccessFields } from "../observability/rpc/fields";
@@ -31,6 +33,10 @@ export const appRouter = {
       .input(getMailboxInputSchema)
       .output(getMailboxOutputSchema)
       .handler(({ input, context }) => runGetMailbox(input, context)),
+    getThread: publicProcedure
+      .input(getThreadInputSchema)
+      .output(getThreadOutputSchema)
+      .handler(({ input, context }) => runGetThread(input, context)),
     send: publicProcedure
       .input(sendMailInputSchema)
       .output(sendMailOutputSchema)

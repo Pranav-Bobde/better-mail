@@ -3,9 +3,12 @@ import test from "node:test";
 
 import {
   createAiSearchQuery,
+  createForwardBody,
   draftEmailParameters,
   filterEmailParameters,
+  forwardEmailParameters,
   getClientMailSearchQuery,
+  getForwardSubject,
 } from "@/features/mail/components/mail-ai-tools";
 
 test("draft tool accepts real-shaped assistant draft values", () => {
@@ -51,4 +54,48 @@ test("client search still filters plain text when Gmail data is unavailable", ()
 
 test("client search skips Gmail syntax when only mock data is available", () => {
   assert.equal(getClientMailSearchQuery('from:"Sarah Rao" newer_than:10d', false), "");
+});
+
+test("forward subject adds a Fwd prefix only when missing", () => {
+  assert.equal(getForwardSubject("Project kickoff"), "Fwd: Project kickoff");
+  assert.equal(getForwardSubject("Fwd: Project kickoff"), "Fwd: Project kickoff");
+  assert.equal(getForwardSubject("fwd: already"), "fwd: already");
+});
+
+test("forward body quotes the original message with a forwarded header", () => {
+  const body = createForwardBody({
+    date: "2026-06-13T10:45:30.000Z",
+    email: "sarah@example.com",
+    name: "Sarah Rao",
+    subject: "Project kickoff",
+    text: "Let's kick off on Monday.",
+  });
+
+  assert.match(body, /^---------- Forwarded message ---------/);
+  assert.match(body, /From: Sarah Rao <sarah@example.com>/);
+  assert.match(body, /Subject: Project kickoff/);
+  assert.match(body, /Let's kick off on Monday\.$/);
+});
+
+test("forward body prepends an optional note above the quoted message", () => {
+  const body = createForwardBody(
+    {
+      date: "2026-06-13T10:45:30.000Z",
+      email: "sarah@example.com",
+      name: "Sarah Rao",
+      subject: "Project kickoff",
+      text: "Let's kick off on Monday.",
+    },
+    "FYI — see below.",
+  );
+
+  assert.match(body, /^FYI — see below\.\n\n---------- Forwarded message ---------/);
+});
+
+test("forward tool requires a valid recipient email", () => {
+  assert.equal(forwardEmailParameters.safeParse({ to: "not-an-email" }).success, false);
+  assert.equal(
+    forwardEmailParameters.safeParse({ to: "john@example.com", note: "FYI" }).success,
+    true,
+  );
 });

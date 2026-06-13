@@ -7,6 +7,7 @@ import {
   getGmailLabel,
   getGmailMessage,
   getGmailProfile,
+  getGmailThread,
   listGmailLabels,
   listGmailMessages,
   sendGmailMessage,
@@ -50,11 +51,18 @@ const systemDisplayLabels = {
   STARRED: "starred",
 } as const;
 
-type MailboxErrorOperation = "getMailbox" | "send";
+type MailboxErrorOperation = "getMailbox" | "getThread" | "send";
 
 const mailboxErrorByOperation = {
   getMailbox: (cause: Error) =>
     mailErrors.GMAIL_LIST_MESSAGES_FAILED({
+      cause,
+      internal: {
+        dependencyOperation: "mailboxService",
+      },
+    }),
+  getThread: (cause: Error) =>
+    mailErrors.GMAIL_GET_THREAD_FAILED({
       cause,
       internal: {
         dependencyOperation: "mailboxService",
@@ -162,6 +170,25 @@ export async function sendMailboxMessage(
     data: {
       messageId: sentMessage.id,
       threadId: sentMessage.threadId,
+    },
+    status: "ok" as const,
+  };
+}
+
+export async function getThreadData(
+  input: { readonly threadId: string },
+  authContext: AuthContext,
+) {
+  const credentials = await getGmailCredentials(authContext, [gmailReadonlyScope]);
+  const [gmailLabels, thread] = await Promise.all([
+    listGmailLabels(credentials.accessToken, gmailUserId),
+    getGmailThread(credentials.accessToken, gmailUserId, input.threadId),
+  ]);
+  const labelById = new Map(gmailLabels.map((label) => [label.id, label]));
+
+  return {
+    data: {
+      messages: thread.messages.map((message) => toMailMessage(message, labelById)),
     },
     status: "ok" as const,
   };

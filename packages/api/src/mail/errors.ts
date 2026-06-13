@@ -111,6 +111,28 @@ export const mailErrors = defineErrorCatalog("mail", {
       module: "mail",
     },
   },
+  GMAIL_GET_THREAD_FAILED: {
+    status: 200,
+    message: "Gmail thread read failed",
+    why: "Gmail threads.get failed while loading a conversation thread",
+    fix: "Check Gmail thread id, response status, and mailbox API access for this request",
+    internal: {
+      dependency: "gmail",
+      dependencyOperation: "threads.get",
+      module: "mail",
+    },
+  },
+  GMAIL_GET_THREAD_RESPONSE_INVALID: {
+    status: 200,
+    message: "Gmail thread response invalid",
+    why: "Gmail threads.get returned a response that did not match the expected thread contract",
+    fix: "Check Gmail thread response shape and parser fixture for this request",
+    internal: {
+      dependency: "gmail",
+      dependencyOperation: "threads.get",
+      module: "mail",
+    },
+  },
   GMAIL_LIST_LABELS_FAILED: {
     status: 200,
     message: "Gmail labels read failed",

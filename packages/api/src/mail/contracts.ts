@@ -15,6 +15,10 @@ export const sendMailInputSchema = z.object({
   to: z.email(),
 });
 
+export const getThreadInputSchema = z.object({
+  threadId: z.string().min(1),
+});
+
 const mailMessageSchema = z.object({
   date: z.string(),
   email: z.email(),
@@ -81,5 +85,19 @@ export const sendMailOutputSchema = z.discriminatedUnion("status", [
   }),
 ]);
 
+export const getThreadOutputSchema = z.discriminatedUnion("status", [
+  z.object({
+    data: z.object({
+      messages: z.array(mailMessageSchema),
+    }),
+    status: z.literal("ok"),
+  }),
+  z.object({
+    error: z.string(),
+    status: z.literal("error"),
+  }),
+]);
+
 export type MailMessage = z.infer<typeof mailMessageSchema>;
 export type MailboxData = z.infer<typeof mailboxDataSchema>;
+export type GetThreadOutput = z.infer<typeof getThreadOutputSchema>;

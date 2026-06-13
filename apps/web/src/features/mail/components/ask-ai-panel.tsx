@@ -12,6 +12,7 @@ import type { DraftEmailInput } from "@/features/mail/components/mail-ai-tools";
 import { draftEmailParameters } from "@/features/mail/components/mail-ai-tools";
 
 export type DraftEmailDecision = "opened_in_compose" | "sent";
+export type DraftPreviewKind = "forward" | "send";
 
 const aiPanelWidth = 360;
 
@@ -163,6 +164,7 @@ function fillChatInput(container: HTMLElement | null, text: string) {
 export function DraftEmailPreviewCard({
   args,
   draftDecisions,
+  kind = "send",
   onDecision,
   onOpenDraft,
   onSendDraft,
@@ -170,6 +172,7 @@ export function DraftEmailPreviewCard({
 }: {
   readonly args: Partial<DraftEmailInput>;
   readonly draftDecisions: Readonly<Record<string, DraftEmailDecision>>;
+  readonly kind?: DraftPreviewKind;
   readonly onDecision: (draft: DraftEmailInput, decision: DraftEmailDecision) => void;
   readonly onOpenDraft: (draft: DraftEmailInput) => void;
   readonly onSendDraft: (draft: DraftEmailInput) => Promise<void>;
@@ -178,7 +181,7 @@ export function DraftEmailPreviewCard({
 }) {
   const [error, setError] = React.useState("");
   const [isSending, setIsSending] = React.useState(false);
-  const preview = createDraftPreviewState(args, draftDecisions, status, isSending);
+  const preview = createDraftPreviewState(args, draftDecisions, status, isSending, kind);
 
   function choose(action: DraftEmailDecision) {
     if (!preview.canChoose || !preview.validDraft) return;
@@ -270,6 +273,7 @@ function createDraftPreviewState(
   draftDecisions: Readonly<Record<string, DraftEmailDecision>>,
   status: "inProgress" | "executing" | "complete",
   isSending: boolean,
+  kind: DraftPreviewKind,
 ): DraftPreviewState {
   const validDraft = getValidDraft(args);
   const decision = getDraftDecision(validDraft, draftDecisions);
@@ -280,7 +284,7 @@ function createDraftPreviewState(
     draft: validDraft ?? createPendingDraft(args),
     message: getDraftPreviewMessage(validDraft),
     showValidationError: !validDraft && status !== "inProgress",
-    statusText: getDraftStatusText(decision, isReady, validDraft?.to, isSending),
+    statusText: getDraftStatusText(decision, isReady, isSending, kind),
     validDraft,
   };
 }
@@ -353,18 +357,29 @@ function DraftPreviewField({ label, value }: { readonly label: string; readonly 
   );
 }
 
-const draftDecisionStatusText = {
-  opened_in_compose: () => "Opened in compose form.",
-  sent: (to: string | undefined) => `Sent through Gmail to ${to}.`,
-} satisfies Record<DraftEmailDecision, (to: string | undefined) => string>;
+const draftKindStatusLabels = {
+  forward: { done: "Mail Forwarded", progress: "Forwarding…" },
+  send: { done: "Mail Sent", progress: "Sending…" },
+} satisfies Record<DraftPreviewKind, { done: string; progress: string }>;
 
 function getDraftStatusText(
   decision: DraftEmailDecision | null,
   isReady: boolean,
-  to: string | undefined,
   isSending: boolean,
+  kind: DraftPreviewKind,
 ) {
-  if (isSending) return "Sending through Gmail...";
-  if (decision) return draftDecisionStatusText[decision](to);
-  return isReady ? "Review before sending." : "Preparing draft...";
+  if (isSending) return draftKindStatusLabels[kind].progress;
+  if (decision) return getDraftDecisionStatusText(decision, kind);
+  return isReady ? "Review before sending" : "Preparing draft…";
+}
+
+function getDraftDecisionStatusText(decision: DraftEmailDecision, kind: DraftPreviewKind) {
+  switch (decision) {
+    case "sent":
+      return draftKindStatusLabels[kind].done;
+    case "opened_in_compose":
+      return "Opened in compose";
+    default:
+      return decision satisfies never;
+  }
 }

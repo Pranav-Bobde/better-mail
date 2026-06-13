@@ -8,6 +8,7 @@ import {
   gmailMessageResponseSchema,
   gmailProfileResponseSchema,
   gmailSendResponseSchema,
+  gmailThreadResponseSchema,
 } from "./gmail-schemas";
 
 const gmailApiBaseUrl = "https://gmail.googleapis.com/gmail/v1";
@@ -119,6 +120,40 @@ export async function getGmailMessage(accessToken: string, userId: string, messa
   }
 
   return parsedMessage.data;
+}
+
+export async function getGmailThread(accessToken: string, userId: string, threadId: string) {
+  const searchParams = new URLSearchParams({
+    format: "full",
+  });
+  const path = `/users/${encodeURIComponent(userId)}/threads/${encodeURIComponent(
+    threadId,
+  )}?${searchParams.toString()}`;
+  const response = await fetchGmail(accessToken, path);
+
+  if (!response.ok) {
+    throw mailErrors.GMAIL_GET_THREAD_FAILED({
+      cause: new Error(`Gmail threads.get endpoint returned HTTP ${response.status}`),
+      internal: {
+        dependencyStatus: response.status,
+        threadId,
+        userId,
+      },
+    });
+  }
+
+  const parsedThread = gmailThreadResponseSchema.safeParse(await response.json());
+  if (!parsedThread.success) {
+    throw mailErrors.GMAIL_GET_THREAD_RESPONSE_INVALID({
+      cause: new Error(z.prettifyError(parsedThread.error)),
+      internal: {
+        threadId,
+        userId,
+      },
+    });
+  }
+
+  return parsedThread.data;
 }
 
 export async function listGmailLabels(accessToken: string, userId: string) {

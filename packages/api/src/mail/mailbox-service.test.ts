@@ -16,9 +16,11 @@ process.env.OPENROUTER_MODEL = "openai/gpt-5.4-nano";
 process.env.COPILOTKIT_TELEMETRY_DISABLED = "true";
 process.env.NODE_ENV = "test";
 
-const { getMailboxData, sendMailboxMessage, toMailMessage } = await import("./mailbox-service");
+const { getMailboxData, getThreadData, sendMailboxMessage, toMailMessage } =
+  await import("./mailbox-service");
 const { mailErrors } = await import("./errors");
-const { getMailboxOutputSchema } = await import("./contracts");
+const { getMailboxOutputSchema, getThreadOutputSchema } = await import("./contracts");
+const { gmailThreadResponseSchema } = await import("./gmail-schemas");
 
 const originalFetch = globalThis.fetch;
 
@@ -178,6 +180,134 @@ test("maps nested real-shaped Gmail HTML message details", () => {
 
   assertMailboxMessageParses(message);
 });
+
+test("fetches Gmail thread with the Better Auth Google access token", async () => {
+  const mutableRequests: Request[] = [];
+
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    mutableRequests.push(request);
+    assert.equal(request.headers.get("authorization"), "Bearer better-auth-thread-token");
+
+    const url = new URL(request.url);
+    if (url.pathname === "/gmail/v1/users/me/labels") {
+      return Response.json(createGmailLabelsResponse());
+    }
+
+    if (url.pathname === "/gmail/v1/users/me/threads/199aa11bb22cc330") {
+      assert.equal(url.searchParams.get("format"), "full");
+      return Response.json(createGmailThread());
+    }
+
+    throw new Error(`Unexpected Gmail request: ${request.url}`);
+  };
+
+  const result = await getThreadData(
+    {
+      threadId: "199aa11bb22cc330",
+    },
+    createSignedInGmailContext("better-auth-thread-token", [
+      "email",
+      "profile",
+      "https://www.googleapis.com/auth/gmail.readonly",
+    ]),
+  );
+
+  assert.equal(result.status, "ok");
+  assert.deepEqual(
+    result.data.messages.map((message) => message.subject),
+    ["Project kickoff", "Re: Project kickoff"],
+  );
+  assert.ok(mutableRequests.length > 0);
+});
+
+test("parses a real-shaped Gmail threads.get payload and maps it oldest-to-newest", () => {
+  const parsedThread = gmailThreadResponseSchema.safeParse(createGmailThread());
+
+  assert.equal(parsedThread.success, true);
+  if (!parsedThread.success) return;
+
+  const labelById = createLabelMap();
+  const messages = parsedThread.data.messages.map((message) => toMailMessage(message, labelById));
+
+  // threads.get returns messages oldest-first; the conversation view relies on
+  // this ordering to render the newest message last.
+  assert.deepEqual(
+    messages.map((message) => message.subject),
+    ["Project kickoff", "Re: Project kickoff"],
+  );
+  assert.deepEqual(
+    messages.map((message) => message.email),
+    ["sarah@example.com", "demo-user@example.com"],
+  );
+  // Every message in a thread shares the same Gmail thread id.
+  assert.deepEqual(
+    messages.map((message) => message.threadId),
+    ["199aa11bb22cc330", "199aa11bb22cc330"],
+  );
+
+  assert.equal(getThreadOutputSchema.safeParse({ data: { messages }, status: "ok" }).success, true);
+});
+
+function createGmailThread() {
+  return {
+    historyId: "987654",
+    id: "199aa11bb22cc330",
+    messages: [
+      {
+        historyId: "987650",
+        id: "199aa11bb22cc330",
+        internalDate: "1760184330000",
+        labelIds: ["INBOX"],
+        payload: {
+          body: { data: encodeGmailBody("Let's kick off the project on Monday."), size: 37 },
+          headers: [
+            { name: "From", value: "Sarah Rao <sarah@example.com>" },
+            { name: "Subject", value: "Project kickoff" },
+            { name: "Date", value: "Sat, 13 Jun 2026 10:45:30 +0530" },
+          ],
+          mimeType: "text/plain",
+        },
+        sizeEstimate: 1024,
+        snippet: "Let's kick off the project on Monday.",
+        threadId: "199aa11bb22cc330",
+      },
+      {
+        historyId: "987654",
+        id: "199aa22cc33dd441",
+        internalDate: "1760187930000",
+        labelIds: ["SENT"],
+        payload: {
+          headers: [
+            { name: "From", value: "Demo User <demo-user@example.com>" },
+            { name: "Subject", value: "Re: Project kickoff" },
+            { name: "Date", value: "Sat, 13 Jun 2026 11:45:30 +0530" },
+          ],
+          mimeType: "multipart/alternative",
+          parts: [
+            {
+              body: { data: encodeGmailBody("Sounds good, see you then."), size: 26 },
+              filename: "",
+              headers: [{ name: "Content-Type", value: "text/plain; charset=UTF-8" }],
+              mimeType: "text/plain",
+              partId: "0",
+            },
+            {
+              body: { data: encodeGmailBody("<p>Sounds good, see you then.</p>"), size: 33 },
+              filename: "",
+              headers: [{ name: "Content-Type", value: "text/html; charset=UTF-8" }],
+              mimeType: "text/html",
+              partId: "1",
+            },
+          ],
+        },
+        sizeEstimate: 2048,
+        snippet: "Sounds good, see you then.",
+        threadId: "199aa11bb22cc330",
+      },
+    ],
+  };
+}
 
 function createHtmlGmailMessage() {
   return {
