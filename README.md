@@ -2,6 +2,10 @@
 
 AI-assisted email client built with Next.js, Gmail APIs, Google OAuth, CopilotKit, oRPC, Prisma, Neon/PostgreSQL, and LangSmith.
 
+## Demo
+
+Demo link: [link](https://drive.google.com/file/d/1p7fPgQxuebJGRDCr0QZyoSMkoCbz2Dxd/view?usp=sharing)
+
 ## How To Setup
 
 Install dependencies:
