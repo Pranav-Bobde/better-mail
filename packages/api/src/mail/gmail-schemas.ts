@@ -47,7 +47,21 @@ export const gmailListMessagesResponseSchema = z.object({
   resultSizeEstimate: z.number().optional(),
 });
 
-export const gmailMessageResponseSchema = z.object({
+export const gmailListThreadsResponseSchema = z.object({
+  nextPageToken: z.string().optional(),
+  resultSizeEstimate: z.number().optional(),
+  threads: z
+    .array(
+      z.object({
+        historyId: z.string().optional(),
+        id: z.string(),
+        snippet: z.string().optional(),
+      }),
+    )
+    .optional(),
+});
+
+const gmailMessageResponseSchema = z.object({
   historyId: z.string().optional(),
   id: z.string(),
   internalDate: z.string().optional(),
@@ -100,3 +114,4 @@ export const gmailSendResponseSchema = z.object({
 export type GmailLabel = z.infer<typeof gmailLabelResponseSchema>;
 export type GmailMessage = z.infer<typeof gmailMessageResponseSchema>;
 export type GmailMessagePart = z.infer<typeof gmailMessagePartSchema>;
+export type GmailThread = z.infer<typeof gmailThreadResponseSchema>;

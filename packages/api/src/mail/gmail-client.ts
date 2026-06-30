@@ -5,13 +5,29 @@ import {
   gmailLabelResponseSchema,
   gmailLabelsListResponseSchema,
   gmailListMessagesResponseSchema,
-  gmailMessageResponseSchema,
+  gmailListThreadsResponseSchema,
   gmailProfileResponseSchema,
   gmailSendResponseSchema,
   gmailThreadResponseSchema,
 } from "./gmail-schemas";
 
 const gmailApiBaseUrl = "https://gmail.googleapis.com/gmail/v1";
+
+type GmailListInput = {
+  readonly accessToken: string;
+  readonly includeSpamTrash?: boolean;
+  readonly labelIds?: readonly string[];
+  readonly maxResults: number;
+  readonly query?: string;
+  readonly userId: string;
+};
+
+type GmailListErrorFields = {
+  readonly dependencyStatus?: number;
+  readonly labelIds?: string;
+  readonly query?: string;
+  readonly userId: string;
+};
 
 export async function getGmailProfile(accessToken: string, userId: string) {
   const response = await fetchGmail(accessToken, `/users/${encodeURIComponent(userId)}/profile`);
@@ -46,80 +62,45 @@ export async function listGmailMessages({
   maxResults,
   query,
   userId,
-}: {
-  readonly accessToken: string;
-  readonly includeSpamTrash?: boolean;
-  readonly labelIds?: readonly string[];
-  readonly maxResults: number;
-  readonly query?: string;
-  readonly userId: string;
-}) {
-  const path = `/users/${encodeURIComponent(userId)}/messages?${createListMessagesSearchParams({
+}: GmailListInput) {
+  return listGmailResource({
+    accessToken,
+    createFailedError: (cause, internal) =>
+      mailErrors.GMAIL_LIST_MESSAGES_FAILED({ cause, internal }),
+    createInvalidError: (cause, internal) =>
+      mailErrors.GMAIL_LIST_MESSAGES_RESPONSE_INVALID({ cause, internal }),
     includeSpamTrash,
     labelIds,
     maxResults,
     query,
-  }).toString()}`;
-  const response = await fetchGmail(accessToken, path);
-
-  if (!response.ok) {
-    throw mailErrors.GMAIL_LIST_MESSAGES_FAILED({
-      cause: new Error(`Gmail messages.list endpoint returned HTTP ${response.status}`),
-      internal: {
-        dependencyStatus: response.status,
-        labelIds: labelIds?.join(","),
-        query,
-        userId,
-      },
-    });
-  }
-
-  const parsedList = gmailListMessagesResponseSchema.safeParse(await response.json());
-  if (!parsedList.success) {
-    throw mailErrors.GMAIL_LIST_MESSAGES_RESPONSE_INVALID({
-      cause: new Error(z.prettifyError(parsedList.error)),
-      internal: {
-        query,
-        userId,
-      },
-    });
-  }
-
-  return parsedList.data;
+    resource: "messages",
+    responseSchema: gmailListMessagesResponseSchema,
+    userId,
+  });
 }
 
-export async function getGmailMessage(accessToken: string, userId: string, messageId: string) {
-  const searchParams = new URLSearchParams({
-    format: "full",
+export async function listGmailThreads({
+  accessToken,
+  includeSpamTrash = false,
+  labelIds,
+  maxResults,
+  query,
+  userId,
+}: GmailListInput) {
+  return listGmailResource({
+    accessToken,
+    createFailedError: (cause, internal) =>
+      mailErrors.GMAIL_LIST_THREADS_FAILED({ cause, internal }),
+    createInvalidError: (cause, internal) =>
+      mailErrors.GMAIL_LIST_THREADS_RESPONSE_INVALID({ cause, internal }),
+    includeSpamTrash,
+    labelIds,
+    maxResults,
+    query,
+    resource: "threads",
+    responseSchema: gmailListThreadsResponseSchema,
+    userId,
   });
-  const path = `/users/${encodeURIComponent(userId)}/messages/${encodeURIComponent(
-    messageId,
-  )}?${searchParams.toString()}`;
-  const response = await fetchGmail(accessToken, path);
-
-  if (!response.ok) {
-    throw mailErrors.GMAIL_GET_MESSAGE_FAILED({
-      cause: new Error(`Gmail messages.get endpoint returned HTTP ${response.status}`),
-      internal: {
-        dependencyStatus: response.status,
-        messageId,
-        userId,
-      },
-    });
-  }
-
-  const parsedMessage = gmailMessageResponseSchema.safeParse(await response.json());
-  if (!parsedMessage.success) {
-    throw mailErrors.GMAIL_GET_MESSAGE_RESPONSE_INVALID({
-      cause: new Error(z.prettifyError(parsedMessage.error)),
-      internal: {
-        messageId,
-        userId,
-      },
-    });
-  }
-
-  return parsedMessage.data;
 }
 
 export async function getGmailThread(accessToken: string, userId: string, threadId: string) {
@@ -271,7 +252,58 @@ async function fetchGmail(accessToken: string, path: string, init?: RequestInit)
   });
 }
 
-function createListMessagesSearchParams({
+async function listGmailResource<T>({
+  accessToken,
+  createFailedError,
+  createInvalidError,
+  includeSpamTrash = false,
+  labelIds,
+  maxResults,
+  query,
+  resource,
+  responseSchema,
+  userId,
+}: GmailListInput & {
+  readonly createFailedError: (cause: Error, internal: GmailListErrorFields) => Error;
+  readonly createInvalidError: (
+    cause: Error,
+    internal: Pick<GmailListErrorFields, "query" | "userId">,
+  ) => Error;
+  readonly resource: "messages" | "threads";
+  readonly responseSchema: z.ZodType<T>;
+}) {
+  const path = `/users/${encodeURIComponent(userId)}/${resource}?${createListSearchParams({
+    includeSpamTrash,
+    labelIds,
+    maxResults,
+    query,
+  }).toString()}`;
+  const response = await fetchGmail(accessToken, path);
+
+  if (!response.ok) {
+    throw createFailedError(
+      new Error(`Gmail ${resource}.list endpoint returned HTTP ${response.status}`),
+      {
+        dependencyStatus: response.status,
+        labelIds: labelIds?.join(","),
+        query,
+        userId,
+      },
+    );
+  }
+
+  const parsedList = responseSchema.safeParse(await response.json());
+  if (!parsedList.success) {
+    throw createInvalidError(new Error(z.prettifyError(parsedList.error)), {
+      query,
+      userId,
+    });
+  }
+
+  return parsedList.data;
+}
+
+function createListSearchParams({
   includeSpamTrash,
   labelIds,
   maxResults,

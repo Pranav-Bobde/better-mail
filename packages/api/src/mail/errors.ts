@@ -177,6 +177,28 @@ export const mailErrors = defineErrorCatalog("mail", {
       module: "mail",
     },
   },
+  GMAIL_LIST_THREADS_FAILED: {
+    status: 200,
+    message: "Gmail thread list failed",
+    why: "Gmail threads.list failed while loading mailbox threads",
+    fix: "Check Gmail query, response status, and OAuth mailbox access for this request",
+    internal: {
+      dependency: "gmail",
+      dependencyOperation: "threads.list",
+      module: "mail",
+    },
+  },
+  GMAIL_LIST_THREADS_RESPONSE_INVALID: {
+    status: 200,
+    message: "Gmail thread list response invalid",
+    why: "Gmail threads.list returned a response that did not match the expected list contract",
+    fix: "Check Gmail threads.list response shape and parser fixture for this request",
+    internal: {
+      dependency: "gmail",
+      dependencyOperation: "threads.list",
+      module: "mail",
+    },
+  },
   GMAIL_SEND_MESSAGE_FAILED: {
     status: 200,
     message: "Gmail send failed",

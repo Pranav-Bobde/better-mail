@@ -5,14 +5,14 @@ import type { MailboxData, MailMessage } from "./contracts";
 import { mailErrors } from "./errors";
 import {
   getGmailLabel,
-  getGmailMessage,
   getGmailProfile,
   getGmailThread,
   listGmailLabels,
   listGmailMessages,
+  listGmailThreads,
   sendGmailMessage,
 } from "./gmail-client";
-import type { GmailLabel, GmailMessage, GmailMessagePart } from "./gmail-schemas";
+import type { GmailLabel, GmailMessage, GmailMessagePart, GmailThread } from "./gmail-schemas";
 
 const mailboxMaxResults = 20;
 const gmailUserId = "me";
@@ -55,7 +55,7 @@ type MailboxErrorOperation = "getMailbox" | "getThread" | "send";
 
 const mailboxErrorByOperation = {
   getMailbox: (cause: Error) =>
-    mailErrors.GMAIL_LIST_MESSAGES_FAILED({
+    mailErrors.GMAIL_LIST_THREADS_FAILED({
       cause,
       internal: {
         dependencyOperation: "mailboxService",
@@ -86,13 +86,13 @@ export async function getMailboxData(
 ) {
   const credentials = await getGmailCredentials(authContext, [gmailReadonlyScope]);
   const mailboxBaseData = await getMailboxBaseData(input, credentials.accessToken);
-  const messageDetails = await getMailboxMessageDetails(
+  const threadDetails = await getMailboxThreadDetails(
     credentials.accessToken,
     gmailUserId,
-    mailboxBaseData.listResponse.messages ?? [],
+    mailboxBaseData.listResponse.threads ?? [],
   );
 
-  return createMailboxSuccessData(mailboxBaseData, messageDetails);
+  return createMailboxSuccessData(mailboxBaseData, threadDetails);
 }
 
 async function getMailboxBaseData(
@@ -102,7 +102,7 @@ async function getMailboxBaseData(
   const [profile, gmailLabels, listResponse, counts] = await Promise.all([
     getGmailProfile(accessToken, gmailUserId),
     listGmailLabels(accessToken, gmailUserId),
-    listGmailMessages({
+    listGmailThreads({
       accessToken,
       labelIds: getListLabelIds(input.view),
       maxResults: mailboxMaxResults,
@@ -120,17 +120,17 @@ async function getMailboxBaseData(
   };
 }
 
-async function getMailboxMessageDetails(
+async function getMailboxThreadDetails(
   accessToken: string,
   userId: string,
-  messages: readonly { readonly id: string }[],
+  threads: readonly { readonly id: string }[],
 ) {
-  return Promise.all(messages.map((message) => getGmailMessage(accessToken, userId, message.id)));
+  return Promise.all(threads.map((thread) => getGmailThread(accessToken, userId, thread.id)));
 }
 
 function createMailboxSuccessData(
   mailboxBaseData: Awaited<ReturnType<typeof getMailboxBaseData>>,
-  messageDetails: readonly GmailMessage[],
+  threadDetails: readonly GmailThread[],
 ) {
   const labelById = new Map(mailboxBaseData.gmailLabels.map((label) => [label.id, label]));
 
@@ -141,7 +141,7 @@ function createMailboxSuccessData(
         label: getMailboxLabel(mailboxBaseData.profile.emailAddress),
       },
       counts: mailboxBaseData.counts,
-      messages: messageDetails.map((message) => toMailMessage(message, labelById)),
+      messages: threadDetails.map((thread) => toMailboxThreadRow(thread, labelById)),
       source: "gmail" as const,
     } satisfies MailboxData,
     status: "ok" as const,
@@ -348,6 +348,34 @@ export function toMailMessage(message: GmailMessage, labelById: ReadonlyMap<stri
     text: getDisplayText(message),
     threadId: message.threadId,
   } satisfies MailMessage;
+}
+
+function toMailboxThreadRow(thread: GmailThread, labelById: ReadonlyMap<string, GmailLabel>) {
+  const latestMessage = getLatestThreadMessage(thread.messages);
+
+  return {
+    ...toMailMessage(latestMessage, labelById),
+    labels: getThreadDisplayLabels(thread.messages, labelById),
+    read: isThreadRead(thread.messages),
+  } satisfies MailMessage;
+}
+
+function getLatestThreadMessage(messages: GmailThread["messages"]) {
+  return messages[messages.length - 1] ?? messages[0];
+}
+
+function getThreadDisplayLabels(
+  messages: GmailThread["messages"],
+  labelById: ReadonlyMap<string, GmailLabel>,
+) {
+  return getDisplayLabels(
+    messages.flatMap((message) => message.labelIds ?? []),
+    labelById,
+  );
+}
+
+function isThreadRead(messages: GmailThread["messages"]) {
+  return messages.every((message) => !(message.labelIds ?? []).includes("UNREAD"));
 }
 
 function getListLabelIds(view: "all" | "unread") {

@@ -77,6 +77,39 @@ test("fetches Gmail mailbox with the Better Auth Google access token", async () 
   assert.ok(mutableRequests.length > 0);
 });
 
+test("returns one Gmail mailbox row per thread", async () => {
+  const mutableRequests: Request[] = [];
+  globalThis.fetch = createThreadedMailboxReadFetchMock(mutableRequests);
+
+  const result = await getMailboxData(
+    {
+      query: "project",
+      view: "all",
+    },
+    createSignedInGmailContext("better-auth-read-token", [
+      "email",
+      "profile",
+      "https://www.googleapis.com/auth/gmail.readonly",
+    ]),
+  );
+
+  assert.equal(result.status, "ok");
+  assert.equal(result.data.messages.length, 1);
+
+  const row = result.data.messages[0];
+  assert.ok(row);
+  assert.equal(row.id, "199aa22cc33dd441");
+  assert.equal(row.threadId, "199aa11bb22cc330");
+  assert.equal(row.subject, "Re: Project kickoff");
+  assert.equal(row.date, new Date(1760187930000).toISOString());
+  assert.equal(row.read, false);
+  assert.ok(
+    mutableRequests.some(
+      (request) => new URL(request.url).pathname === "/gmail/v1/users/me/threads/199aa11bb22cc330",
+    ),
+  );
+});
+
 test("sends Gmail with the Better Auth Google access token", async () => {
   const mutableRequests: Request[] = [];
 
@@ -309,6 +342,26 @@ function createGmailThread() {
   };
 }
 
+function createGmailThreadWithUnreadMessage() {
+  const thread = createGmailThread();
+  const firstMessage = thread.messages[0];
+  const secondMessage = thread.messages[1];
+
+  assert.ok(firstMessage);
+  assert.ok(secondMessage);
+
+  return {
+    ...thread,
+    messages: [
+      {
+        ...firstMessage,
+        labelIds: ["INBOX", "UNREAD"],
+      },
+      secondMessage,
+    ],
+  };
+}
+
 function createHtmlGmailMessage() {
   return {
     historyId: "12345",
@@ -427,12 +480,23 @@ function createUserLabels() {
 }
 
 function createMailboxReadFetchMock(mutableRequests: Request[]) {
+  return createAuthorizedMailboxFetchMock(mutableRequests, createMailboxReadResponse);
+}
+
+function createThreadedMailboxReadFetchMock(mutableRequests: Request[]) {
+  return createAuthorizedMailboxFetchMock(mutableRequests, createThreadedMailboxReadResponse);
+}
+
+function createAuthorizedMailboxFetchMock(
+  mutableRequests: Request[],
+  createResponse: (request: Request) => Response,
+) {
   return async (input: string | URL | Request, init?: RequestInit) => {
     const request = new Request(input, init);
     mutableRequests.push(request);
     assert.equal(request.headers.get("authorization"), "Bearer better-auth-read-token");
 
-    return createMailboxReadResponse(request);
+    return createResponse(request);
   };
 }
 
@@ -447,6 +511,28 @@ function createMailboxReadResponse(request: Request) {
     return createMailboxListResponse(url);
   }
 
+  if (url.pathname === "/gmail/v1/users/me/threads") {
+    return createMailboxThreadsResponse(url);
+  }
+
+  return createGmailLabelCountResponseFromUrl(url, request.url);
+}
+
+function createThreadedMailboxReadResponse(request: Request) {
+  const url = new URL(request.url);
+  const exactResponse = createExactThreadedMailboxReadResponse(url);
+  if (exactResponse) {
+    return exactResponse;
+  }
+
+  if (url.pathname === "/gmail/v1/users/me/messages") {
+    return createThreadedMailboxMessagesResponse(url);
+  }
+
+  if (url.pathname === "/gmail/v1/users/me/threads") {
+    return createThreadedMailboxThreadsResponse(url);
+  }
+
   return createGmailLabelCountResponseFromUrl(url, request.url);
 }
 
@@ -458,9 +544,51 @@ function createExactMailboxReadResponse(url: URL) {
       "/gmail/v1/users/me/messages/18c2f5f6c5f9f001",
       () => Response.json(createGmailMessageDetailResponse(url)),
     ],
+    [
+      "/gmail/v1/users/me/threads/18c2f5f6c5f9f001",
+      () => Response.json(createSingleMessageGmailThread(url)),
+    ],
   ]);
 
   return exactResponses.get(url.pathname)?.();
+}
+
+function createExactThreadedMailboxReadResponse(url: URL) {
+  const thread = createGmailThreadWithUnreadMessage();
+  const exactResponses = new Map<string, () => Response>([
+    ["/gmail/v1/users/me/profile", () => Response.json(createGmailProfileResponse())],
+    ["/gmail/v1/users/me/labels", () => Response.json(createGmailLabelsResponse())],
+    [
+      `/gmail/v1/users/me/threads/${thread.id}`,
+      () => {
+        assert.equal(url.searchParams.get("format"), "full");
+        return Response.json(thread);
+      },
+    ],
+  ]);
+
+  const exactResponse = exactResponses.get(url.pathname)?.();
+  if (exactResponse) {
+    return exactResponse;
+  }
+
+  return createExactThreadedMessageReadResponse(url, thread);
+}
+
+function createExactThreadedMessageReadResponse(
+  url: URL,
+  thread: ReturnType<typeof createGmailThreadWithUnreadMessage>,
+) {
+  const message = thread.messages.find(
+    (item) => `/gmail/v1/users/me/messages/${item.id}` === url.pathname,
+  );
+
+  if (message) {
+    assert.equal(url.searchParams.get("format"), "full");
+    return Response.json(message);
+  }
+
+  return null;
 }
 
 function createGmailLabelCountResponseFromUrl(url: URL, requestUrl: string) {
@@ -492,6 +620,83 @@ function createGmailMessageDetailResponse(url: URL) {
   return createHtmlGmailMessage();
 }
 
+function createSingleMessageGmailThread(url: URL) {
+  const message = createHtmlGmailMessage();
+  assert.equal(url.searchParams.get("format"), "full");
+
+  return {
+    historyId: message.historyId,
+    id: message.threadId,
+    messages: [message],
+  };
+}
+
+function createThreadedMailboxMessagesResponse(url: URL) {
+  assert.equal(url.searchParams.get("includeSpamTrash"), "false");
+
+  if (url.searchParams.get("maxResults") === "20") {
+    const thread = createGmailThreadWithUnreadMessage();
+    assert.equal(url.searchParams.get("q"), "project");
+    assert.deepEqual(url.searchParams.getAll("labelIds"), ["INBOX"]);
+    return Response.json({
+      messages: thread.messages
+        .map((message) => ({
+          id: message.id,
+          threadId: message.threadId,
+        }))
+        .toReversed(),
+      resultSizeEstimate: 2,
+    });
+  }
+
+  return createMailboxCountMessagesResponse(url);
+}
+
+function createThreadedMailboxThreadsResponse(url: URL) {
+  const thread = createGmailThreadWithUnreadMessage();
+  const latestMessage = thread.messages.at(-1);
+
+  assert.ok(latestMessage);
+  assert.equal(url.searchParams.get("includeSpamTrash"), "false");
+  assert.equal(url.searchParams.get("maxResults"), "20");
+  assert.equal(url.searchParams.get("q"), "project");
+  assert.deepEqual(url.searchParams.getAll("labelIds"), ["INBOX"]);
+
+  return Response.json({
+    resultSizeEstimate: 1,
+    threads: [
+      {
+        historyId: thread.historyId,
+        id: thread.id,
+        snippet: latestMessage.snippet,
+      },
+    ],
+  });
+}
+
+function createMailboxThreadsResponse(url: URL) {
+  assert.equal(url.searchParams.get("includeSpamTrash"), "false");
+  const query = url.searchParams.get("q");
+
+  if (query === "from:sender is:unread") {
+    const message = createHtmlGmailMessage();
+    assert.equal(url.searchParams.get("maxResults"), "20");
+    assert.deepEqual(url.searchParams.getAll("labelIds"), ["INBOX", "UNREAD"]);
+    return Response.json({
+      resultSizeEstimate: 1,
+      threads: [
+        {
+          historyId: message.historyId,
+          id: message.threadId,
+          snippet: message.snippet,
+        },
+      ],
+    });
+  }
+
+  throw new Error(`Unexpected Gmail threads.list query: ${url.toString()}`);
+}
+
 function createMailboxListResponse(url: URL) {
   assert.equal(url.searchParams.get("includeSpamTrash"), "false");
   const query = url.searchParams.get("q");
@@ -505,6 +710,11 @@ function createMailboxListResponse(url: URL) {
     });
   }
 
+  return createMailboxCountMessagesResponse(url);
+}
+
+function createMailboxCountMessagesResponse(url: URL) {
+  const query = url.searchParams.get("q");
   assert.equal(url.searchParams.get("maxResults"), "1");
   return Response.json({
     resultSizeEstimate: query === "-in:inbox -in:sent -in:drafts -in:trash -in:spam" ? 7 : 3,

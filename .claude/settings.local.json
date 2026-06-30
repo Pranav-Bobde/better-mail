@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(agent-browser)",
+      "Bash(AGENT_BROWSER_HEADED=0 agent-browser open http://localhost:3002)"
+    ]
+  }
+}
