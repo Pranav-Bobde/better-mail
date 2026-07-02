@@ -5,15 +5,12 @@ import { defineConfig, env } from "prisma/config";
 
 // Load .env.local first, then .env.development.local (v0 sandbox)
 // to ensure DATABASE_URL is available during postinstall
-dotenv.config({
-  override: false,
-  path: "../../apps/web/.env.local",
-});
-
-dotenv.config({
-  override: true,
-  path: "../../apps/web/.env.development.local",
-});
+for (const envFile of [".env.local", ".env.development.local"]) {
+  dotenv.config({
+    override: envFile === ".env.development.local",
+    path: path.join("../../apps/web", envFile),
+  });
+}
 
 export default defineConfig({
   schema: path.join("prisma", "schema"),
