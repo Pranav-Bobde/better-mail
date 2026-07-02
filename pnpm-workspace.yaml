@@ -6,6 +6,9 @@ allowBuilds:
   msw: true
   "@prisma/engines": true
   prisma: true
+  esbuild: true
+  sharp: true
+  "@scarf/scarf": false
 
 catalog:
   dotenv: ^17.2.2

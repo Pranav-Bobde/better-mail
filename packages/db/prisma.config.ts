@@ -3,10 +3,12 @@ import path from "node:path";
 import dotenv from "dotenv";
 import { defineConfig, env } from "prisma/config";
 
-dotenv.config({
-  override: true,
-  path: "../../apps/web/.env.local",
-});
+for (const envFile of [".env.local", ".env.development.local"]) {
+  dotenv.config({
+    override: true,
+    path: path.join("../../apps/web", envFile),
+  });
+}
 
 export default defineConfig({
   schema: path.join("prisma", "schema"),
