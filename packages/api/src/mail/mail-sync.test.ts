@@ -23,6 +23,20 @@ test("parses real-shaped Gmail Pub/Sub push notification", () => {
   assert.equal(parsedEnvelope.message.messageId, "2070443601311540");
 });
 
+test("parses snake_case Gmail Pub/Sub push notification metadata", () => {
+  const parsedEnvelope = gmailPubSubPushEnvelopeSchema.parse(
+    createRealShapedSnakeCaseGmailPubSubEnvelope(),
+  );
+
+  assert.deepEqual(parsedEnvelope.gmailNotification, {
+    emailAddress: "demo-user@example.com",
+    historyId: "9876543210",
+  });
+  assert.equal(parsedEnvelope.pubsubEnvelopeKind, "wrapped");
+  assert.equal(parsedEnvelope.message.messageId, "2070443601311542");
+  assert.equal(parsedEnvelope.message.publishTime, "2026-06-13T12:02:00.000Z");
+});
+
 test("parses unwrapped Gmail Pub/Sub push notification", () => {
   const parsedEnvelope = gmailPubSubPushEnvelopeSchema.parse(
     createRealShapedUnwrappedGmailPubSubNotification(),
@@ -482,6 +496,23 @@ function createRealShapedGmailPubSubEnvelope() {
       ).toString("base64url"),
       messageId: "2070443601311540",
       publishTime: "2026-06-13T12:00:00.000Z",
+    },
+    subscription: "projects/rapid-snowfall-498906-b9/subscriptions/gmail-demo-webhook",
+  };
+}
+
+function createRealShapedSnakeCaseGmailPubSubEnvelope() {
+  return {
+    message: {
+      data: Buffer.from(
+        JSON.stringify({
+          emailAddress: "demo-user@example.com",
+          historyId: "9876543210",
+        }),
+        "utf8",
+      ).toString("base64url"),
+      message_id: "2070443601311542",
+      publish_time: "2026-06-13T12:02:00.000Z",
     },
     subscription: "projects/rapid-snowfall-498906-b9/subscriptions/gmail-demo-webhook",
   };

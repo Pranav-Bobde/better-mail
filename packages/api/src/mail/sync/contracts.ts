@@ -6,12 +6,32 @@ const gmailPubSubNotificationSchema = z.object({
 });
 
 const gmailPubSubWrappedPushEnvelopeSchema = z.object({
-  message: z.object({
-    attributes: z.record(z.string(), z.string()).optional(),
-    data: z.string(),
-    messageId: z.string(),
-    publishTime: z.string(),
-  }),
+  message: z
+    .object({
+      attributes: z.record(z.string(), z.string()).optional(),
+      data: z.string(),
+      messageId: z.string().optional(),
+      message_id: z.string().optional(),
+      publishTime: z.string().optional(),
+      publish_time: z.string().optional(),
+    })
+    .transform((message, context) => {
+      const metadata = getPubSubMessageMetadata(message);
+
+      if (!metadata) {
+        context.addIssue({
+          code: "custom",
+          message: "Invalid Pub/Sub message metadata",
+        });
+        return z.NEVER;
+      }
+
+      return {
+        attributes: message.attributes,
+        data: message.data,
+        ...metadata,
+      };
+    }),
   subscription: z.string(),
 });
 
@@ -53,6 +73,30 @@ function decodeGmailPubSubNotification(data: string) {
   } catch {
     return null;
   }
+}
+
+function getPubSubMessageMetadata(message: {
+  readonly messageId?: string;
+  readonly message_id?: string;
+  readonly publishTime?: string;
+  readonly publish_time?: string;
+}) {
+  const messageId = getFirstString(message.messageId, message.message_id);
+  const publishTime = getFirstString(message.publishTime, message.publish_time);
+
+  if (!messageId || !publishTime) {
+    return null;
+  }
+
+  return { messageId, publishTime };
+}
+
+function getFirstString(primary: string | undefined, fallback: string | undefined) {
+  if (primary) {
+    return primary;
+  }
+
+  return fallback;
 }
 
 export const mailSyncEventSchema = z.discriminatedUnion("type", [
