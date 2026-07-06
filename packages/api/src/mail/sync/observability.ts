@@ -1,6 +1,10 @@
 import type { z } from "zod";
 
-import type { gmailPubSubPushEnvelopeSchema, MailSyncEvent } from "./contracts";
+import type {
+  GmailPubSubPayloadShape,
+  gmailPubSubPushEnvelopeSchema,
+  MailSyncEvent,
+} from "./contracts";
 
 type GmailPubSubPushEnvelope = z.infer<typeof gmailPubSubPushEnvelopeSchema>;
 
@@ -50,6 +54,7 @@ type GmailWebhookFields = {
 type GmailWebhookErrorFields = {
   readonly provider: "GMAIL";
   readonly errorCode: "INVALID_GMAIL_PUBSUB_ENVELOPE";
+  readonly payloadShape?: GmailPubSubPayloadShape;
 };
 
 type MailSyncQueueEnqueuedFields = {
@@ -99,11 +104,14 @@ export function createGmailWebhookFields(input: {
   };
 }
 
-export function createGmailWebhookInvalidEnvelopeFields(): MailSyncWideEventFields {
+export function createGmailWebhookInvalidEnvelopeFields(input?: {
+  readonly payloadShape?: GmailPubSubPayloadShape;
+}): MailSyncWideEventFields {
   return {
     handler: "api.webhooks.gmail.POST",
     mailSync: {
       errorCode: "INVALID_GMAIL_PUBSUB_ENVELOPE",
+      ...(input?.payloadShape ? { payloadShape: input.payloadShape } : {}),
       provider: "GMAIL",
     },
     module: "mail",

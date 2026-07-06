@@ -1,4 +1,7 @@
-import { gmailPubSubPushEnvelopeSchema } from "@code-main/api/mail/sync/contracts";
+import {
+  getGmailPubSubPayloadShape,
+  gmailPubSubPushEnvelopeSchema,
+} from "@code-main/api/mail/sync/contracts";
 import {
   createGmailWebhookFields,
   createGmailWebhookInvalidEnvelopeFields,
@@ -13,10 +16,15 @@ const activeMailboxWindowMs = 24 * 60 * 60 * 1000;
 
 async function handleGmailWebhook(request: Request) {
   const log = useLogger<MailSyncWideEventFields>();
-  const parsedEnvelope = gmailPubSubPushEnvelopeSchema.safeParse(await request.json());
+  const payload = await request.json();
+  const parsedEnvelope = gmailPubSubPushEnvelopeSchema.safeParse(payload);
 
   if (!parsedEnvelope.success) {
-    log.set(createGmailWebhookInvalidEnvelopeFields());
+    log.set(
+      createGmailWebhookInvalidEnvelopeFields({
+        payloadShape: getGmailPubSubPayloadShape(payload),
+      }),
+    );
 
     return Response.json({
       status: "error",

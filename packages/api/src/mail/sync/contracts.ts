@@ -2,7 +2,7 @@ import { z } from "zod";
 
 const gmailPubSubNotificationSchema = z.object({
   emailAddress: z.email(),
-  historyId: z.string(),
+  historyId: z.union([z.string(), z.number()]).transform(String),
 });
 
 const gmailPubSubWrappedPushEnvelopeSchema = z.object({
@@ -67,6 +67,23 @@ export const gmailPubSubPushEnvelopeSchema = z.union([
   normalizedUnwrappedGmailPubSubPushEnvelopeSchema,
 ]);
 
+export function getGmailPubSubPayloadShape(payload: unknown) {
+  const topLevelKeys = getObjectKeys(payload);
+  const message = getObjectProperty(payload, "message");
+  const data = getObjectProperty(message, "data");
+  const decodedData = typeof data === "string" ? decodeGmailPubSubNotification(data) : null;
+
+  return {
+    decodedDataKeys: getObjectKeys(decodedData),
+    decodedDataTypes: getObjectTypes(decodedData),
+    messageKeys: getObjectKeys(message),
+    payloadKind: getValueKind(payload),
+    topLevelKeys,
+  };
+}
+
+export type GmailPubSubPayloadShape = ReturnType<typeof getGmailPubSubPayloadShape>;
+
 function decodeGmailPubSubNotification(data: string) {
   try {
     return JSON.parse(Buffer.from(data, "base64url").toString("utf8")) as unknown;
@@ -97,6 +114,42 @@ function getFirstString(primary: string | undefined, fallback: string | undefine
   }
 
   return fallback;
+}
+
+function getObjectKeys(value: unknown) {
+  if (!isPlainRecord(value)) {
+    return [];
+  }
+
+  return Object.keys(value).sort();
+}
+
+function getObjectProperty(value: unknown, key: string) {
+  if (!isPlainRecord(value)) {
+    return undefined;
+  }
+
+  return value[key];
+}
+
+function getObjectTypes(value: unknown) {
+  if (!isPlainRecord(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, getValueKind(item)]));
+}
+
+function getValueKind(value: unknown) {
+  if (Array.isArray(value)) {
+    return "array";
+  }
+
+  return value === null ? "null" : typeof value;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export const mailSyncEventSchema = z.discriminatedUnion("type", [

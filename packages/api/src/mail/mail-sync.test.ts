@@ -5,9 +5,14 @@ import { setRequiredTestEnv } from "../test-env";
 
 setRequiredTestEnv();
 
-const { gmailPubSubPushEnvelopeSchema, mailSyncEventSchema } = await import("./sync/contracts");
-const { createGmailWebhookFields, createMailSyncQueueEnqueuedFields, createMailSyncWorkerFields } =
-  await import("./sync/observability");
+const { getGmailPubSubPayloadShape, gmailPubSubPushEnvelopeSchema, mailSyncEventSchema } =
+  await import("./sync/contracts");
+const {
+  createGmailWebhookFields,
+  createGmailWebhookInvalidEnvelopeFields,
+  createMailSyncQueueEnqueuedFields,
+  createMailSyncWorkerFields,
+} = await import("./sync/observability");
 const { createPrismaMailSyncRepository } = await import("./sync/prisma-mail-sync-repository");
 const { MailSyncLockBusyError, processMailSyncEvent } = await import("./sync/processor");
 const { gmailThreadResponseSchema } = await import("./gmail-schemas");
@@ -37,6 +42,19 @@ test("parses snake_case Gmail Pub/Sub push notification metadata", () => {
   assert.equal(parsedEnvelope.message.publishTime, "2026-06-13T12:02:00.000Z");
 });
 
+test("parses numeric Gmail Pub/Sub history id as a string", () => {
+  const parsedEnvelope = gmailPubSubPushEnvelopeSchema.parse({
+    emailAddress: "demo-user@example.com",
+    historyId: 9876543210,
+  });
+
+  assert.deepEqual(parsedEnvelope.gmailNotification, {
+    emailAddress: "demo-user@example.com",
+    historyId: "9876543210",
+  });
+  assert.equal(parsedEnvelope.pubsubEnvelopeKind, "unwrapped");
+});
+
 test("parses unwrapped Gmail Pub/Sub push notification", () => {
   const parsedEnvelope = gmailPubSubPushEnvelopeSchema.parse(
     createRealShapedUnwrappedGmailPubSubNotification(),
@@ -60,6 +78,72 @@ test("rejects malformed Gmail Pub/Sub push notification without throwing", () =>
   });
 
   assert.equal(parsedEnvelope.success, false);
+});
+
+test("describes invalid Gmail Pub/Sub payload shape without leaking values", () => {
+  const payload = {
+    message: {
+      data: Buffer.from(
+        JSON.stringify({
+          emailAddress: "demo-user@example.com",
+          historyId: 9876543210,
+        }),
+        "utf8",
+      ).toString("base64url"),
+      message_id: "2070443601311542",
+    },
+    subscription: "projects/rapid-snowfall-498906-b9/subscriptions/gmail-demo-webhook",
+  };
+
+  const shape = getGmailPubSubPayloadShape(payload);
+
+  assert.deepEqual(shape, {
+    decodedDataKeys: ["emailAddress", "historyId"],
+    decodedDataTypes: {
+      emailAddress: "string",
+      historyId: "number",
+    },
+    messageKeys: ["data", "message_id"],
+    payloadKind: "object",
+    topLevelKeys: ["message", "subscription"],
+  });
+  assert.equal(JSON.stringify(shape).includes("demo-user@example.com"), false);
+});
+
+test("creates Gmail webhook invalid-envelope fields with safe payload shape", () => {
+  const fields = createGmailWebhookInvalidEnvelopeFields({
+    payloadShape: {
+      decodedDataKeys: ["emailAddress", "historyId"],
+      decodedDataTypes: {
+        emailAddress: "string",
+        historyId: "number",
+      },
+      messageKeys: ["data", "message_id"],
+      payloadKind: "object",
+      topLevelKeys: ["message", "subscription"],
+    },
+  });
+
+  assert.deepEqual(fields, {
+    handler: "api.webhooks.gmail.POST",
+    mailSync: {
+      errorCode: "INVALID_GMAIL_PUBSUB_ENVELOPE",
+      payloadShape: {
+        decodedDataKeys: ["emailAddress", "historyId"],
+        decodedDataTypes: {
+          emailAddress: "string",
+          historyId: "number",
+        },
+        messageKeys: ["data", "message_id"],
+        payloadKind: "object",
+        topLevelKeys: ["message", "subscription"],
+      },
+      provider: "GMAIL",
+    },
+    module: "mail",
+    operation: "mail.sync.webhook.gmail",
+    outcome: "error",
+  });
 });
 
 test("creates safe Gmail webhook fields without logging mailbox email", () => {
