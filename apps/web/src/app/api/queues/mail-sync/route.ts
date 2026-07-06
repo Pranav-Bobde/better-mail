@@ -18,28 +18,42 @@ const handleMailSyncQueueCallback = handleCallback(
   async (rawEvent, metadata) => {
     const event = mailSyncEventSchema.parse(rawEvent);
 
-    await processMailSyncEvent(event, {
-      gmailProvider: createGmailSyncProvider(),
-      lockOwnerId: metadata.messageId,
-      now: new Date(),
-      repository: createPrismaMailSyncRepository(),
-      tokenProvider: {
-        getGoogleAccessToken: async (input) => {
-          const token = await auth.api.getAccessToken({
-            body: {
-              accountId: input.providerAccountId,
-              providerId: "google",
-              userId: input.userId,
-            },
-          });
+    try {
+      await processMailSyncEvent(event, {
+        gmailProvider: createGmailSyncProvider(),
+        lockOwnerId: metadata.messageId,
+        now: new Date(),
+        repository: createPrismaMailSyncRepository(),
+        tokenProvider: {
+          getGoogleAccessToken: async (input) => {
+            const token = await auth.api.getAccessToken({
+              body: {
+                accountId: input.providerAccountId,
+                providerId: "google",
+                userId: input.userId,
+              },
+            });
 
-          return {
-            accessToken: token.accessToken,
-            scopes: token.scopes,
-          };
+            return {
+              accessToken: token.accessToken,
+              scopes: token.scopes,
+            };
+          },
         },
-      },
-    });
+      });
+    } catch (error) {
+      logMailSyncWorkerFields(
+        createMailSyncWorkerFields({
+          errorCode: getErrorCode(error),
+          errorName: getErrorName(error),
+          event,
+          metadata,
+          outcome: "failed",
+        }),
+      );
+
+      throw error;
+    }
 
     logMailSyncWorkerFields(
       createMailSyncWorkerFields({
@@ -54,6 +68,7 @@ const handleMailSyncQueueCallback = handleCallback(
       if (metadata.deliveryCount > maxDeliveryCount) {
         logMailSyncWorkerFields(
           createMailSyncWorkerFields({
+            errorCode: getErrorCode(error),
             errorName: getErrorName(error),
             metadata,
             outcome: "dropped",
@@ -66,6 +81,7 @@ const handleMailSyncQueueCallback = handleCallback(
       if (error instanceof MailSyncLockBusyError) {
         logMailSyncWorkerFields(
           createMailSyncWorkerFields({
+            errorCode: getErrorCode(error),
             errorName: error.name,
             metadata,
             outcome: "retry",
@@ -79,6 +95,7 @@ const handleMailSyncQueueCallback = handleCallback(
       const retryAfterSeconds = Math.min(300, 2 ** metadata.deliveryCount * 5);
       logMailSyncWorkerFields(
         createMailSyncWorkerFields({
+          errorCode: getErrorCode(error),
           errorName: getErrorName(error),
           metadata,
           outcome: "retry",
@@ -102,6 +119,12 @@ function getErrorName(error: unknown) {
   }
 
   return "UnknownError";
+}
+
+function getErrorCode(error: unknown) {
+  const code = (Object(error) as { readonly code?: unknown }).code;
+
+  return typeof code === "string" ? code : undefined;
 }
 
 export const POST = withEvlog(handleMailSyncQueueCallback);

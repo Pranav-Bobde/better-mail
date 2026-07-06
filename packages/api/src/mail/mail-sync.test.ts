@@ -175,6 +175,7 @@ test("creates safe queue worker fields with delivery metadata", () => {
 
 test("creates safe queue worker retry fields with error metadata", () => {
   const fields = createMailSyncWorkerFields({
+    errorCode: "P2002",
     errorName: "MailSyncLockBusyError",
     metadata: {
       consumerGroup: "src_Sapp_Sapi_Squeues_Smail-sync_Sroute_Dts",
@@ -192,6 +193,7 @@ test("creates safe queue worker retry fields with error metadata", () => {
     mailSync: {
       consumerGroup: "src_Sapp_Sapi_Squeues_Smail-sync_Sroute_Dts",
       deliveryCount: 3,
+      errorCode: "P2002",
       errorName: "MailSyncLockBusyError",
       queueMessageId: "queue-message-id",
       queueTopicName: "mail-sync",
@@ -201,6 +203,45 @@ test("creates safe queue worker retry fields with error metadata", () => {
     module: "mail",
     operation: "mail.sync.queue.worker",
     outcome: "retry",
+  });
+});
+
+test("creates safe queue worker failure fields with event and error metadata", () => {
+  const fields = createMailSyncWorkerFields({
+    errorCode: "P2003",
+    errorName: "PrismaClientKnownRequestError",
+    event: {
+      mailAccountId: "mail-account-id",
+      notificationHistoryId: "9876543210",
+      type: "GMAIL_INCREMENTAL_SYNC_REQUESTED",
+    },
+    metadata: {
+      consumerGroup: "src_Sapp_Sapi_Squeues_Smail-sync_Sroute_Dts",
+      deliveryCount: 4,
+      messageId: "queue-message-id",
+      region: "iad1",
+      topicName: "mail-sync",
+    },
+    outcome: "failed",
+  });
+
+  assert.deepEqual(fields, {
+    handler: "api.queues.mail-sync.POST",
+    mailSync: {
+      consumerGroup: "src_Sapp_Sapi_Squeues_Smail-sync_Sroute_Dts",
+      deliveryCount: 4,
+      errorCode: "P2003",
+      errorName: "PrismaClientKnownRequestError",
+      eventType: "GMAIL_INCREMENTAL_SYNC_REQUESTED",
+      mailAccountId: "mail-account-id",
+      notificationHistoryId: "9876543210",
+      queueMessageId: "queue-message-id",
+      queueTopicName: "mail-sync",
+      region: "iad1",
+    },
+    module: "mail",
+    operation: "mail.sync.queue.worker",
+    outcome: "failed",
   });
 });
 

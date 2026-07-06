@@ -30,7 +30,7 @@ export type MailSyncWideEventFields =
       readonly operation: "mail.sync.queue.worker";
       readonly module: "mail";
       readonly handler: "api.queues.mail-sync.POST";
-      readonly outcome: "processed" | "retry" | "dropped";
+      readonly outcome: "processed" | "retry" | "dropped" | "failed";
       readonly mailSync: MailSyncWorkerFields;
     };
 
@@ -71,6 +71,7 @@ type MailSyncWorkerFields = {
   readonly eventType?: MailSyncEvent["type"];
   readonly mailAccountId?: string;
   readonly notificationHistoryId?: string;
+  readonly errorCode?: string;
   readonly errorName?: string;
   readonly retryAfterSeconds?: number;
 };
@@ -146,6 +147,14 @@ export function createMailSyncWorkerFields(
         readonly outcome: "processed";
       }
     | {
+        readonly errorCode?: string;
+        readonly errorName: string;
+        readonly event: MailSyncEvent;
+        readonly metadata: QueueMetadata;
+        readonly outcome: "failed";
+      }
+    | {
+        readonly errorCode?: string;
         readonly errorName: string;
         readonly metadata: QueueMetadata;
         readonly outcome: "retry" | "dropped";
@@ -157,7 +166,9 @@ export function createMailSyncWorkerFields(
     mailSync:
       input.outcome === "processed"
         ? createProcessedWorkerFields(input.event, input.metadata)
-        : createRetryWorkerFields(input),
+        : input.outcome === "failed"
+          ? createFailedWorkerFields(input)
+          : createRetryWorkerFields(input),
     module: "mail",
     operation: "mail.sync.queue.worker",
     outcome: input.outcome,
@@ -218,14 +229,32 @@ function createProcessedWorkerFields(
 }
 
 function createRetryWorkerFields(input: {
+  readonly errorCode?: string;
   readonly errorName: string;
   readonly metadata: QueueMetadata;
   readonly retryAfterSeconds?: number;
 }): MailSyncWorkerFields {
   return {
     ...createQueueMetadataFields(input.metadata),
+    ...getErrorCodeFields(input.errorCode),
     errorName: input.errorName,
     ...getRetryAfterFields(input.retryAfterSeconds),
+  };
+}
+
+function createFailedWorkerFields(input: {
+  readonly errorCode?: string;
+  readonly errorName: string;
+  readonly event: MailSyncEvent;
+  readonly metadata: QueueMetadata;
+}): MailSyncWorkerFields {
+  return {
+    ...createQueueMetadataFields(input.metadata),
+    eventType: input.event.type,
+    mailAccountId: input.event.mailAccountId,
+    ...getNotificationHistoryFields(input.event),
+    ...getErrorCodeFields(input.errorCode),
+    errorName: input.errorName,
   };
 }
 
@@ -236,6 +265,16 @@ function createQueueMetadataFields(metadata: QueueMetadata) {
     queueMessageId: metadata.messageId,
     queueTopicName: metadata.topicName,
     region: metadata.region,
+  };
+}
+
+function getErrorCodeFields(errorCode: string | undefined) {
+  if (!errorCode) {
+    return {};
+  }
+
+  return {
+    errorCode,
   };
 }
 
