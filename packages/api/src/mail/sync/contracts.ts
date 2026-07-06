@@ -5,17 +5,18 @@ const gmailPubSubNotificationSchema = z.object({
   historyId: z.string(),
 });
 
-export const gmailPubSubPushEnvelopeSchema = z
-  .object({
-    message: z.object({
-      attributes: z.record(z.string(), z.string()).optional(),
-      data: z.string(),
-      messageId: z.string(),
-      publishTime: z.string(),
-    }),
-    subscription: z.string(),
-  })
-  .transform((envelope, context) => {
+const gmailPubSubWrappedPushEnvelopeSchema = z.object({
+  message: z.object({
+    attributes: z.record(z.string(), z.string()).optional(),
+    data: z.string(),
+    messageId: z.string(),
+    publishTime: z.string(),
+  }),
+  subscription: z.string(),
+});
+
+const normalizedWrappedGmailPubSubPushEnvelopeSchema =
+  gmailPubSubWrappedPushEnvelopeSchema.transform((envelope, context) => {
     const decodedNotification = decodeGmailPubSubNotification(envelope.message.data);
     const parsedNotification = gmailPubSubNotificationSchema.safeParse(decodedNotification);
 
@@ -30,8 +31,21 @@ export const gmailPubSubPushEnvelopeSchema = z
     return {
       ...envelope,
       gmailNotification: parsedNotification.data,
+      pubsubEnvelopeKind: "wrapped" as const,
     };
   });
+
+const normalizedUnwrappedGmailPubSubPushEnvelopeSchema = gmailPubSubNotificationSchema.transform(
+  (gmailNotification) => ({
+    gmailNotification,
+    pubsubEnvelopeKind: "unwrapped" as const,
+  }),
+);
+
+export const gmailPubSubPushEnvelopeSchema = z.union([
+  normalizedWrappedGmailPubSubPushEnvelopeSchema,
+  normalizedUnwrappedGmailPubSubPushEnvelopeSchema,
+]);
 
 function decodeGmailPubSubNotification(data: string) {
   try {

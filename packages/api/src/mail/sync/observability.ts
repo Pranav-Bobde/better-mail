@@ -36,9 +36,10 @@ export type MailSyncWideEventFields =
 
 type GmailWebhookFields = {
   readonly provider: "GMAIL";
-  readonly pubsubMessageId: string;
-  readonly pubsubPublishTime: string;
-  readonly pubsubSubscription: string;
+  readonly pubsubEnvelopeKind: "wrapped" | "unwrapped";
+  readonly pubsubMessageId?: string;
+  readonly pubsubPublishTime?: string;
+  readonly pubsubSubscription?: string;
   readonly notificationHistoryId: string;
   readonly enqueued: boolean;
   readonly mailAccountId?: string;
@@ -172,9 +173,8 @@ function createGmailWebhookMailSyncFields(input: {
   const fields = {
     notificationHistoryId: input.envelope.gmailNotification.historyId,
     provider: "GMAIL" as const,
-    pubsubMessageId: input.envelope.message.messageId,
-    pubsubPublishTime: input.envelope.message.publishTime,
-    pubsubSubscription: input.envelope.subscription,
+    pubsubEnvelopeKind: input.envelope.pubsubEnvelopeKind,
+    ...getPubSubEnvelopeFields(input.envelope),
   };
 
   if (!input.mailAccountId) {
@@ -190,6 +190,18 @@ function createGmailWebhookMailSyncFields(input: {
     mailAccountId: input.mailAccountId,
     queueMessageId: input.queueMessageId ?? null,
     queueTopicName: input.queueTopicName,
+  };
+}
+
+function getPubSubEnvelopeFields(envelope: GmailPubSubPushEnvelope) {
+  if (envelope.pubsubEnvelopeKind === "unwrapped") {
+    return {};
+  }
+
+  return {
+    pubsubMessageId: envelope.message.messageId,
+    pubsubPublishTime: envelope.message.publishTime,
+    pubsubSubscription: envelope.subscription,
   };
 }
 

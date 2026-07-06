@@ -18,7 +18,20 @@ test("parses real-shaped Gmail Pub/Sub push notification", () => {
     emailAddress: "demo-user@example.com",
     historyId: "9876543210",
   });
+  assert.equal(parsedEnvelope.pubsubEnvelopeKind, "wrapped");
   assert.equal(parsedEnvelope.message.messageId, "2070443601311540");
+});
+
+test("parses unwrapped Gmail Pub/Sub push notification", () => {
+  const parsedEnvelope = gmailPubSubPushEnvelopeSchema.parse(
+    createRealShapedUnwrappedGmailPubSubNotification(),
+  );
+
+  assert.deepEqual(parsedEnvelope.gmailNotification, {
+    emailAddress: "demo-user@example.com",
+    historyId: "9876543210",
+  });
+  assert.equal(parsedEnvelope.pubsubEnvelopeKind, "unwrapped");
 });
 
 test("rejects malformed Gmail Pub/Sub push notification without throwing", () => {
@@ -51,9 +64,40 @@ test("creates safe Gmail webhook fields without logging mailbox email", () => {
       mailAccountId: "mail-account-id",
       notificationHistoryId: "9876543210",
       provider: "GMAIL",
+      pubsubEnvelopeKind: "wrapped",
       pubsubMessageId: "2070443601311540",
       pubsubPublishTime: "2026-06-13T12:00:00.000Z",
       pubsubSubscription: "projects/rapid-snowfall-498906-b9/subscriptions/gmail-demo-webhook",
+      queueMessageId: "queue-message-id",
+      queueTopicName: "mail-sync",
+    },
+    module: "mail",
+    operation: "mail.sync.webhook.gmail",
+    outcome: "accepted",
+  });
+  assert.equal(JSON.stringify(fields).includes("demo-user@example.com"), false);
+});
+
+test("creates safe Gmail webhook fields for unwrapped Pub/Sub payload", () => {
+  const parsedEnvelope = gmailPubSubPushEnvelopeSchema.parse(
+    createRealShapedUnwrappedGmailPubSubNotification(),
+  );
+
+  const fields = createGmailWebhookFields({
+    envelope: parsedEnvelope,
+    mailAccountId: "mail-account-id",
+    queueMessageId: "queue-message-id",
+    queueTopicName: "mail-sync",
+  });
+
+  assert.deepEqual(fields, {
+    handler: "api.webhooks.gmail.POST",
+    mailSync: {
+      enqueued: true,
+      mailAccountId: "mail-account-id",
+      notificationHistoryId: "9876543210",
+      provider: "GMAIL",
+      pubsubEnvelopeKind: "unwrapped",
       queueMessageId: "queue-message-id",
       queueTopicName: "mail-sync",
     },
@@ -346,6 +390,13 @@ function createRealShapedGmailPubSubEnvelope() {
       publishTime: "2026-06-13T12:00:00.000Z",
     },
     subscription: "projects/rapid-snowfall-498906-b9/subscriptions/gmail-demo-webhook",
+  };
+}
+
+function createRealShapedUnwrappedGmailPubSubNotification() {
+  return {
+    emailAddress: "demo-user@example.com",
+    historyId: "9876543210",
   };
 }
 
