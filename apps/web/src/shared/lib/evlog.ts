@@ -23,7 +23,7 @@ const drain = createDrainPipeline<DrainContext>({
   }),
 );
 
-export const { withEvlog, useLogger } = createEvlog({
+export const { log, withEvlog, useLogger } = createEvlog({
   drain,
   service: "code-main-web",
 });

@@ -3,6 +3,15 @@ import { PrismaNeon } from "@prisma/adapter-neon";
 
 import { PrismaClient } from "../prisma/generated/client";
 
+export { Prisma } from "../prisma/generated/client";
+export type { PrismaClient } from "../prisma/generated/client";
+export {
+  MailAccountSyncStatus,
+  MailProvider,
+  MailSyncCursorKind,
+  MailSyncScopeType,
+} from "../prisma/generated/enums";
+
 export function createPrismaClient() {
   if (!env.DATABASE_URL) {
     throw new Error("DATABASE_URL is required to create a Prisma client");

@@ -17,9 +17,11 @@ import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
 import { EvlogError } from "evlog";
 import { NextRequest } from "next/server";
 import { auth } from "@code-main/auth";
+import { createPrismaMailSyncRepository } from "@code-main/api/mail/sync/prisma-mail-sync-repository";
 
 import { identifyEvlogUser } from "@/shared/lib/evlog-auth";
 import { useLogger, withEvlog } from "@/shared/lib/evlog";
+import { vercelMailSyncBroker } from "@/shared/lib/mail-sync-queue";
 
 const rpcHandler = new RPCHandler(appRouter);
 const apiHandler = new OpenAPIHandler(appRouter, {
@@ -90,6 +92,8 @@ async function createRouteAuthContext(req: NextRequest): Promise<AuthContext> {
         scopes: token.scopes,
       };
     },
+    mailSyncBroker: vercelMailSyncBroker,
+    mailSyncRepository: createPrismaMailSyncRepository(),
     session,
   };
 }

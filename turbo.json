@@ -1,5 +1,22 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalEnv": [
+    "APP_URL",
+    "BETTER_AUTH_SECRET",
+    "BETTER_AUTH_URL",
+    "COPILOTKIT_TELEMETRY_DISABLED",
+    "CORS_ORIGIN",
+    "DATABASE_URL",
+    "GMAIL_PUBSUB_TOPIC_NAME",
+    "GOOGLE_OAUTH_CLIENT_ID",
+    "GOOGLE_OAUTH_CLIENT_SECRET",
+    "LANGSMITH_API_KEY",
+    "LANGSMITH_PROJECT",
+    "LANGSMITH_TRACING",
+    "NODE_ENV",
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_MODEL"
+  ],
   "ui": "tui",
   "tasks": {
     "build": {

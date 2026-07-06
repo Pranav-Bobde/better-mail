@@ -1,20 +1,9 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
-process.env.APP_URL = "http://localhost:4000";
-process.env.BETTER_AUTH_SECRET = "test-secret-with-at-least-32-chars";
-process.env.BETTER_AUTH_URL = "http://localhost:4000";
-process.env.CORS_ORIGIN = "http://localhost:4000";
-process.env.DATABASE_URL = "postgresql://user:password@localhost:5432/test_db";
-process.env.GOOGLE_OAUTH_CLIENT_ID = "test-google-client-id";
-process.env.GOOGLE_OAUTH_CLIENT_SECRET = "test-google-client-secret";
-process.env.OPENROUTER_API_KEY = "sk-or-v1-real-shaped-test";
-process.env.LANGSMITH_API_KEY = "lsv2_pt_real-shaped-test";
-process.env.LANGSMITH_TRACING = "true";
-process.env.LANGSMITH_PROJECT = "ai-email-client";
-process.env.OPENROUTER_MODEL = "openai/gpt-5.4-nano";
-process.env.COPILOTKIT_TELEMETRY_DISABLED = "true";
-process.env.NODE_ENV = "test";
+import { setRequiredTestEnv } from "../test-env";
+
+setRequiredTestEnv();
 
 const { getMailboxData, getThreadData, sendMailboxMessage, toMailMessage } =
   await import("./mailbox-service");

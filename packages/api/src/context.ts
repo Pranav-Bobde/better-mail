@@ -1,6 +1,9 @@
 import type { EvlogOrpcContext } from "evlog/orpc";
 import type { NextRequest } from "next/server";
 
+import type { MailSyncBroker } from "./mail/sync/broker";
+import type { createPrismaMailSyncRepository } from "./mail/sync/prisma-mail-sync-repository";
+
 export type AuthSession = {
   readonly session: {
     readonly expiresAt: Date;
@@ -24,11 +27,15 @@ export type GoogleAccessToken = {
 
 export type AuthContext = {
   readonly getGoogleAccessToken: (() => Promise<GoogleAccessToken>) | null;
+  readonly mailSyncBroker?: MailSyncBroker | null;
+  readonly mailSyncRepository?: ReturnType<typeof createPrismaMailSyncRepository> | null;
   readonly session: AuthSession | null;
 };
 
 const unauthenticatedContext = {
   getGoogleAccessToken: null,
+  mailSyncBroker: null,
+  mailSyncRepository: null,
   session: null,
 } satisfies AuthContext;
 

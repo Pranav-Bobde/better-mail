@@ -7,3 +7,176 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+enum MailProvider {
+  GMAIL
+}
+
+enum MailAccountSyncStatus {
+  ACTIVE
+  AUTH_ERROR
+  RESYNC_NEEDED
+  DISABLED
+}
+
+enum MailSyncCursorKind {
+  GMAIL_HISTORY_ID
+  MS_GRAPH_DELTA_LINK
+}
+
+enum MailSyncScopeType {
+  MAILBOX
+  FOLDER
+}
+
+model MailAccount {
+  id                    String                @id @default(cuid())
+  userId                String
+  authAccountId         String?
+  providerAccountId     String
+  provider              MailProvider          @default(GMAIL)
+  email                 String
+  syncStatus            MailAccountSyncStatus @default(ACTIVE)
+  lastMailboxActivityAt DateTime?
+  watchExpiresAt        DateTime?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  authAccount Account?         @relation(fields: [authAccountId], references: [id], onDelete: SetNull)
+  cursors     MailSyncCursor[]
+  labels      MailLabel[]
+  messages    MailMessage[]
+  threads     MailThread[]
+
+  @@unique([userId, provider, providerAccountId])
+  @@index([userId])
+  @@index([authAccountId])
+  @@map("mail_account")
+}
+
+model MailSyncCursor {
+  id              String             @id @default(cuid())
+  mailAccountId   String
+  cursorKind      MailSyncCursorKind
+  scopeType       MailSyncScopeType
+  providerScopeId String
+  cursorValue     String
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  mailAccount MailAccount   @relation(fields: [mailAccountId], references: [id], onDelete: Cascade)
+  lock        MailSyncLock?
+
+  @@unique([mailAccountId, cursorKind, scopeType, providerScopeId])
+  @@index([mailAccountId])
+  @@map("mail_sync_cursor")
+}
+
+model MailSyncLock {
+  id               String   @id @default(cuid())
+  mailSyncCursorId String   @unique
+  lockedUntil      DateTime
+  lockedBy         String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  cursor MailSyncCursor @relation(fields: [mailSyncCursorId], references: [id], onDelete: Cascade)
+
+  @@index([lockedUntil])
+  @@map("mail_sync_lock")
+}
+
+model MailThread {
+  id                 String    @id @default(cuid())
+  mailAccountId      String
+  providerThreadId   String
+  latestMessageId    String?
+  latestMessageAt    DateTime?
+  messageCount       Int       @default(0)
+  isRead             Boolean   @default(true)
+  isInbox            Boolean   @default(false)
+  isSent             Boolean   @default(false)
+  isDraft            Boolean   @default(false)
+  isTrash            Boolean   @default(false)
+  isSpam             Boolean   @default(false)
+  isStarred          Boolean   @default(false)
+  isImportant        Boolean   @default(false)
+  deletedAt          DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  mailAccount   MailAccount   @relation(fields: [mailAccountId], references: [id], onDelete: Cascade)
+  latestMessage MailMessage?  @relation("LatestThreadMessage", fields: [latestMessageId], references: [id], onDelete: SetNull)
+  messages      MailMessage[] @relation("ThreadMessages")
+
+  @@unique([mailAccountId, providerThreadId])
+  @@index([mailAccountId, latestMessageAt])
+  @@index([latestMessageId])
+  @@map("mail_thread")
+}
+
+model MailMessage {
+  id                String    @id @default(cuid())
+  mailAccountId     String
+  mailThreadId      String
+  providerMessageId String
+  rfc822MessageId   String?
+  inReplyToHeader   String?
+  referencesHeader  String?
+  subject           String
+  snippet           String?
+  textBody          String
+  htmlBody          String?
+  fromName          String
+  fromEmail         String
+  toRecipients      Json
+  ccRecipients      Json
+  bccRecipients     Json
+  sentAt            DateTime
+  sizeEstimate      Int?
+  deletedAt         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  mailAccount      MailAccount        @relation(fields: [mailAccountId], references: [id], onDelete: Cascade)
+  mailThread       MailThread         @relation("ThreadMessages", fields: [mailThreadId], references: [id], onDelete: Cascade)
+  latestForThreads MailThread[]       @relation("LatestThreadMessage")
+  labels           MailMessageLabel[]
+
+  @@unique([mailAccountId, providerMessageId])
+  @@index([mailAccountId, sentAt])
+  @@index([mailThreadId, sentAt])
+  @@map("mail_message")
+}
+
+model MailLabel {
+  id              String   @id @default(cuid())
+  mailAccountId   String
+  providerLabelId String
+  name            String
+  type            String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  mailAccount MailAccount        @relation(fields: [mailAccountId], references: [id], onDelete: Cascade)
+  messages    MailMessageLabel[]
+
+  @@unique([mailAccountId, providerLabelId])
+  @@index([mailAccountId])
+  @@map("mail_label")
+}
+
+model MailMessageLabel {
+  id            String   @id @default(cuid())
+  mailMessageId String
+  mailLabelId   String
+  createdAt     DateTime @default(now())
+
+  message MailMessage @relation(fields: [mailMessageId], references: [id], onDelete: Cascade)
+  label   MailLabel   @relation(fields: [mailLabelId], references: [id], onDelete: Cascade)
+
+  @@unique([mailMessageId, mailLabelId])
+  @@index([mailLabelId])
+  @@map("mail_message_label")
+}

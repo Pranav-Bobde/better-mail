@@ -8,6 +8,7 @@ model User {
   updatedAt     DateTime  @updatedAt
   sessions      Session[]
   accounts      Account[]
+  mailAccounts  MailAccount[]
 
   @@unique([email])
   @@map("user")
@@ -35,6 +36,7 @@ model Account {
   providerId            String
   userId                String
   user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mailAccounts          MailAccount[]
   accessToken           String?
   refreshToken          String?
   idToken               String?

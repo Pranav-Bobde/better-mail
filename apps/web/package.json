@@ -21,6 +21,7 @@
     "@orpc/tanstack-query": "^1.13.14",
     "@orpc/zod": "catalog:",
     "@tanstack/react-query": "^5.90.12",
+    "@vercel/queue": "^0.3.1",
     "babel-plugin-react-compiler": "^1.0.0",
     "better-auth": "catalog:",
     "date-fns": "^4.4.0",

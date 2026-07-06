@@ -221,6 +221,50 @@ export const mailErrors = defineErrorCatalog("mail", {
       module: "mail",
     },
   },
+  GMAIL_HISTORY_LIST_FAILED: {
+    status: 200,
+    message: "Gmail history read failed",
+    why: "Gmail users.history.list failed while reconciling mailbox changes",
+    fix: "Check Gmail history cursor freshness, response status, and mailbox API access",
+    internal: {
+      dependency: "gmail",
+      dependencyOperation: "users.history.list",
+      module: "mail",
+    },
+  },
+  GMAIL_HISTORY_LIST_RESPONSE_INVALID: {
+    status: 200,
+    message: "Gmail history response invalid",
+    why: "Gmail users.history.list returned a response that did not match the expected history contract",
+    fix: "Check Gmail history response shape and parser fixture for this request",
+    internal: {
+      dependency: "gmail",
+      dependencyOperation: "users.history.list",
+      module: "mail",
+    },
+  },
+  GMAIL_WATCH_FAILED: {
+    status: 200,
+    message: "Gmail watch failed",
+    why: "Gmail users.watch failed while registering mailbox push notifications",
+    fix: "Check Gmail Pub/Sub topic, Gmail API permissions, and OAuth mailbox access",
+    internal: {
+      dependency: "gmail",
+      dependencyOperation: "users.watch",
+      module: "mail",
+    },
+  },
+  GMAIL_WATCH_RESPONSE_INVALID: {
+    status: 200,
+    message: "Gmail watch response invalid",
+    why: "Gmail users.watch returned a response that did not match the expected watch contract",
+    fix: "Check Gmail watch response shape and parser fixture for this request",
+    internal: {
+      dependency: "gmail",
+      dependencyOperation: "users.watch",
+      module: "mail",
+    },
+  },
 } as const);
 
 declare module "evlog" {

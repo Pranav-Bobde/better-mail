@@ -8,6 +8,7 @@ export const serverEnvSchema = z.object({
   DATABASE_URL: z.string().min(1),
   GOOGLE_OAUTH_CLIENT_ID: z.string().min(1),
   GOOGLE_OAUTH_CLIENT_SECRET: z.string().min(1),
+  GMAIL_PUBSUB_TOPIC_NAME: z.string().min(1),
   OPENROUTER_API_KEY: z.string().min(1),
   LANGSMITH_API_KEY: z.string().min(1),
   LANGSMITH_TRACING: z.literal("true"),

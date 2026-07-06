@@ -17,6 +17,7 @@ import {
   LogOut,
   MessagesSquare,
   Pencil,
+  RefreshCw,
   Search,
   Send,
   ShoppingCart,
@@ -185,6 +186,7 @@ function MailWorkspace({
     isFetching: isMailboxFetching,
     mailbox,
     isInitialLoading: isMailboxInitialLoading,
+    refetchMailbox,
   } = useMailboxData(searchQuery, view);
   const sendMailMutation = useSendReplyMutation();
   const mailboxViewState = getMailboxViewState(mailbox, mailboxErrorMessage);
@@ -456,6 +458,7 @@ function MailWorkspace({
           isAiOpen={isAiOpen}
           isMailboxFetching={isMailboxFetching}
           onOpenCompose={openCompose}
+          onRefreshMailbox={refetchMailbox}
           onSearchInputChange={setSearchInput}
           onSearchQueryChange={setSearchQuery}
           onSelectMail={handleSelectMail}
@@ -507,6 +510,7 @@ function MailListPanel({
   isMailboxFetching,
   mailboxErrorMessage,
   onOpenCompose,
+  onRefreshMailbox,
   onSearchInputChange,
   onSearchQueryChange,
   onSelectMail,
@@ -523,6 +527,7 @@ function MailListPanel({
   readonly isMailboxFetching: boolean;
   readonly mailboxErrorMessage: string | null;
   readonly onOpenCompose: () => void;
+  readonly onRefreshMailbox: () => void;
   readonly onSearchInputChange: (value: string) => void;
   readonly onSearchQueryChange: (value: string) => void;
   readonly onSelectMail: (id: MailItem["id"] | null) => void;
@@ -543,7 +548,9 @@ function MailListPanel({
       >
         <MailListHeader
           isAiOpen={isAiOpen}
+          isMailboxFetching={isMailboxFetching}
           onOpenCompose={onOpenCompose}
+          onRefreshMailbox={onRefreshMailbox}
           onToggleAiPanel={onToggleAiPanel}
         />
         <Separator />
@@ -614,11 +621,15 @@ function ReconnectGoogleButton() {
 
 function MailListHeader({
   isAiOpen,
+  isMailboxFetching,
   onOpenCompose,
+  onRefreshMailbox,
   onToggleAiPanel,
 }: {
   readonly isAiOpen: boolean;
+  readonly isMailboxFetching: boolean;
   readonly onOpenCompose: () => void;
+  readonly onRefreshMailbox: () => void;
   readonly onToggleAiPanel: () => void;
 }) {
   return (
@@ -632,6 +643,23 @@ function MailListHeader({
           Unread
         </TabsTrigger>
       </TabsList>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              className="ml-2 size-7"
+              disabled={isMailboxFetching}
+              onClick={onRefreshMailbox}
+              size="icon"
+              variant="ghost"
+            />
+          }
+        >
+          <RefreshCw className={cn("size-3.5", isMailboxFetching && "animate-spin")} />
+          <span className="sr-only">Refresh mailbox</span>
+        </TooltipTrigger>
+        <TooltipContent>Refresh mailbox</TooltipContent>
+      </Tooltip>
       <Button
         className="ml-2 h-7 gap-1.5 px-2.5 text-xs"
         onClick={onOpenCompose}
@@ -819,6 +847,9 @@ function useMailboxData(searchQuery: string, view: MailView) {
     isInitialLoading: mailboxQuery.isLoading,
     isFetching: mailboxQuery.isFetching,
     mailbox,
+    refetchMailbox: () => {
+      void mailboxQuery.refetch();
+    },
   };
 }
 

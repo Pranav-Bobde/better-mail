@@ -111,7 +111,76 @@ export const gmailSendResponseSchema = z.object({
   threadId: z.string(),
 });
 
+export const gmailHistoryListResponseSchema = z.object({
+  history: z
+    .array(
+      z.object({
+        id: z.string().optional(),
+        labelsAdded: z
+          .array(
+            z.object({
+              labelIds: z.array(z.string()).optional(),
+              message: z.object({
+                id: z.string(),
+                threadId: z.string(),
+              }),
+            }),
+          )
+          .optional(),
+        labelsRemoved: z
+          .array(
+            z.object({
+              labelIds: z.array(z.string()).optional(),
+              message: z.object({
+                id: z.string(),
+                threadId: z.string(),
+              }),
+            }),
+          )
+          .optional(),
+        messages: z
+          .array(
+            z.object({
+              id: z.string(),
+              threadId: z.string(),
+            }),
+          )
+          .optional(),
+        messagesAdded: z
+          .array(
+            z.object({
+              message: z.object({
+                id: z.string(),
+                threadId: z.string(),
+              }),
+            }),
+          )
+          .optional(),
+        messagesDeleted: z
+          .array(
+            z.object({
+              message: z.object({
+                id: z.string(),
+                threadId: z.string(),
+              }),
+            }),
+          )
+          .optional(),
+      }),
+    )
+    .optional(),
+  historyId: z.string().optional(),
+  nextPageToken: z.string().optional(),
+});
+
+export const gmailWatchResponseSchema = z.object({
+  expiration: z.string(),
+  historyId: z.string(),
+});
+
 export type GmailLabel = z.infer<typeof gmailLabelResponseSchema>;
+export type GmailHistoryListResponse = z.infer<typeof gmailHistoryListResponseSchema>;
 export type GmailMessage = z.infer<typeof gmailMessageResponseSchema>;
 export type GmailMessagePart = z.infer<typeof gmailMessagePartSchema>;
 export type GmailThread = z.infer<typeof gmailThreadResponseSchema>;
+export type GmailWatchResponse = z.infer<typeof gmailWatchResponseSchema>;

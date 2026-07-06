@@ -12,7 +12,15 @@ import {
   listGmailThreads,
   sendGmailMessage,
 } from "./gmail-client";
-import type { GmailLabel, GmailMessage, GmailMessagePart, GmailThread } from "./gmail-schemas";
+import {
+  getGmailHeaderValue,
+  getGmailMessageDateIso,
+  getGmailMessageDisplayHtml,
+  getGmailMessageDisplayText,
+  getGmailMessageSubject,
+  parseGmailEmailAddress,
+} from "./gmail-message-utils";
+import type { GmailLabel, GmailMessage, GmailThread } from "./gmail-schemas";
 
 const mailboxMaxResults = 20;
 const gmailUserId = "me";
@@ -85,14 +93,58 @@ export async function getMailboxData(
   authContext: AuthContext,
 ) {
   const credentials = await getGmailCredentials(authContext, [gmailReadonlyScope]);
+  const cachedMailboxData = await getCachedMailboxData(input, authContext);
+
+  if (cachedMailboxData) {
+    await enqueueMailboxSyncIfAvailable(authContext, {
+      mailAccountId: cachedMailboxData.mailAccountId,
+      type: "GMAIL_INCREMENTAL_SYNC_REQUESTED",
+    });
+
+    return {
+      data: cachedMailboxData.data,
+      status: "ok" as const,
+    };
+  }
+
   const mailboxBaseData = await getMailboxBaseData(input, credentials.accessToken);
   const threadDetails = await getMailboxThreadDetails(
     credentials.accessToken,
     gmailUserId,
     mailboxBaseData.listResponse.threads ?? [],
   );
+  await cacheMailboxDataIfAvailable(authContext, mailboxBaseData, threadDetails);
 
   return createMailboxSuccessData(mailboxBaseData, threadDetails);
+}
+
+async function getCachedMailboxData(
+  input: {
+    readonly query: string;
+    readonly view: "all" | "unread";
+  },
+  authContext: AuthContext,
+) {
+  if (!authContext.session || !authContext.mailSyncRepository) {
+    return null;
+  }
+
+  await authContext.mailSyncRepository.markGmailMailboxActivity(authContext.session.user.id);
+
+  const cachedMailbox = await authContext.mailSyncRepository.getCachedMailboxData({
+    query: input.query,
+    userId: authContext.session.user.id,
+    view: input.view,
+  });
+
+  if (!cachedMailbox) {
+    return null;
+  }
+
+  return {
+    data: cachedMailbox.data,
+    mailAccountId: cachedMailbox.mailAccountId,
+  };
 }
 
 async function getMailboxBaseData(
@@ -146,6 +198,77 @@ function createMailboxSuccessData(
     } satisfies MailboxData,
     status: "ok" as const,
   };
+}
+
+async function cacheMailboxDataIfAvailable(
+  authContext: AuthContext,
+  mailboxBaseData: Awaited<ReturnType<typeof getMailboxBaseData>>,
+  threadDetails: readonly GmailThread[],
+) {
+  const syncCacheContext = getSyncCacheContext(authContext, mailboxBaseData.profile.historyId);
+  if (!syncCacheContext) {
+    return;
+  }
+
+  const mailAccount = await syncCacheContext.repository.upsertGmailMailAccount({
+    email: mailboxBaseData.profile.emailAddress,
+    historyId: syncCacheContext.historyId,
+    userId: syncCacheContext.userId,
+  });
+
+  if (!mailAccount) {
+    return;
+  }
+
+  await Promise.all(
+    threadDetails.map((thread) =>
+      syncCacheContext.repository.applyGmailThread({
+        latestMessageId: getLatestThreadMessage(thread.messages).id,
+        mailAccountId: mailAccount.id,
+        thread,
+        threadId: thread.id,
+      }),
+    ),
+  );
+
+  await enqueueMailboxSyncIfAvailable(authContext, {
+    mailAccountId: mailAccount.id,
+    type: "GMAIL_RENEW_WATCH_REQUESTED",
+  });
+}
+
+function getSyncCacheContext(authContext: AuthContext, historyId: string | undefined) {
+  if (!authContext.session) {
+    return null;
+  }
+
+  if (!authContext.mailSyncRepository) {
+    return null;
+  }
+
+  if (!historyId) {
+    return null;
+  }
+
+  return {
+    historyId,
+    repository: authContext.mailSyncRepository,
+    userId: authContext.session.user.id,
+  };
+}
+
+async function enqueueMailboxSyncIfAvailable(
+  authContext: AuthContext,
+  event: {
+    readonly mailAccountId: string;
+    readonly type: "GMAIL_INCREMENTAL_SYNC_REQUESTED" | "GMAIL_RENEW_WATCH_REQUESTED";
+  },
+) {
+  try {
+    await authContext.mailSyncBroker?.enqueueMailSyncEvent(event);
+  } catch {
+    return;
+  }
 }
 
 export async function sendMailboxMessage(
@@ -332,20 +455,20 @@ async function getMessageCountByQuery(accessToken: string, userId: string, query
 
 export function toMailMessage(message: GmailMessage, labelById: ReadonlyMap<string, GmailLabel>) {
   const headers = message.payload?.headers ?? [];
-  const from = parseEmailAddress(getHeaderValue(headers, "From"));
+  const from = parseGmailEmailAddress(getGmailHeaderValue(headers, "From"));
   const labelIds = message.labelIds ?? [];
 
   return {
-    date: getMessageDate(message, headers),
+    date: getGmailMessageDateIso(message),
     email: from.email,
-    html: getDisplayHtml(message),
+    html: getGmailMessageDisplayHtml(message),
     id: message.id,
     labels: getDisplayLabels(labelIds, labelById),
     name: from.name,
     read: !labelIds.includes("UNREAD"),
     snippet: message.snippet,
-    subject: getMessageSubject(headers),
-    text: getDisplayText(message),
+    subject: getGmailMessageSubject(headers),
+    text: getGmailMessageDisplayText(message),
     threadId: message.threadId,
   } satisfies MailMessage;
 }
@@ -399,65 +522,6 @@ function getMailboxQuery(input: { readonly query: string; readonly view: "all" |
   return parts.filter((part) => part.length > 0).join(" ") || undefined;
 }
 
-function getMessageText(part: GmailMessagePart | undefined): string {
-  if (!part) {
-    return "";
-  }
-
-  return getPlainTextFromPart(part) || getHtmlTextFromPart(part);
-}
-
-function getPlainTextFromPart(part: GmailMessagePart) {
-  return getDirectPlainText(part) || getNestedPlainText(part);
-}
-
-function getDirectPlainText(part: GmailMessagePart) {
-  return part.mimeType === "text/plain" ? decodePartBody(part) : "";
-}
-
-function getNestedPlainText(part: GmailMessagePart) {
-  const parts = part.parts ?? [];
-  return decodePartBody(
-    findPartWithBody([...parts, ...parts.flatMap((item) => item.parts ?? [])], "text/plain"),
-  );
-}
-
-function getHtmlTextFromPart(part: GmailMessagePart) {
-  const htmlPart = findPartWithBody(part.parts ?? [], "text/html");
-
-  return htmlPart ? stripHtml(decodePartBody(htmlPart)) : "";
-}
-
-function getDisplayHtml(message: GmailMessage) {
-  return getMessageHtml(message.payload) || undefined;
-}
-
-function getMessageHtml(part: GmailMessagePart | undefined): string {
-  if (!part) {
-    return "";
-  }
-
-  if (part.mimeType === "text/html") {
-    return decodePartBody(part);
-  }
-
-  const parts = part.parts ?? [];
-  const htmlPart = findPartWithBody(
-    [...parts, ...parts.flatMap((item) => item.parts ?? [])],
-    "text/html",
-  );
-
-  return decodePartBody(htmlPart);
-}
-
-function findPartWithBody(parts: readonly GmailMessagePart[], mimeType: string) {
-  return parts.find((item) => item.mimeType === mimeType && item.body?.data);
-}
-
-function decodePartBody(part: GmailMessagePart | undefined) {
-  return part?.body?.data ? decodeGmailBody(part.body.data) : "";
-}
-
 function getDisplayLabels(labelIds: readonly string[], labelById: ReadonlyMap<string, GmailLabel>) {
   return labelIds
     .flatMap((labelId) => getDisplayLabel(labelId, labelById))
@@ -480,50 +544,6 @@ function getUserDisplayLabel(labelId: string, labelById: ReadonlyMap<string, Gma
   return userLabel?.type === "user" ? userLabel.name.toLowerCase() : null;
 }
 
-function getHeaderValue(
-  headers: readonly { readonly name: string; readonly value: string }[],
-  name: string,
-) {
-  return headers.find((header) => header.name.toLowerCase() === name.toLowerCase())?.value ?? "";
-}
-
-function parseEmailAddress(value: string) {
-  const match = value.match(/^\s*"?([^"<]*)"?\s*<([^>]+)>/);
-  const displayName = match?.[1]?.trim();
-  const email = match?.[2]?.trim() || value.trim();
-
-  return {
-    email,
-    name: displayName || email || "Unknown sender",
-  };
-}
-
-function getMessageDate(
-  message: GmailMessage,
-  headers: readonly { readonly name: string; readonly value: string }[],
-) {
-  if (message.internalDate) {
-    return new Date(Number(message.internalDate)).toISOString();
-  }
-
-  const dateHeader = getHeaderValue(headers, "Date");
-  const parsedDate = Date.parse(dateHeader);
-
-  if (Number.isNaN(parsedDate)) {
-    return new Date().toISOString();
-  }
-
-  return new Date(parsedDate).toISOString();
-}
-
-function getDisplayText(message: GmailMessage) {
-  return getMessageText(message.payload) || message.snippet || "";
-}
-
-function getMessageSubject(headers: readonly { readonly name: string; readonly value: string }[]) {
-  return getHeaderValue(headers, "Subject") || "(No subject)";
-}
-
 function createRawMimeMessage(input: {
   readonly body: string;
   readonly inReplyTo?: string;
@@ -542,22 +562,6 @@ function createRawMimeMessage(input: {
   }
 
   return Buffer.from(`${headers.join("\r\n")}\r\n\r\n${input.body}`).toString("base64url");
-}
-
-function decodeGmailBody(data: string) {
-  return Buffer.from(data, "base64url").toString("utf8");
-}
-
-function stripHtml(value: string) {
-  return value
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .trim();
 }
 
 function getMessageTotal(label: GmailLabel) {

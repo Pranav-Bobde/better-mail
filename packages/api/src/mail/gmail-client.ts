@@ -1,7 +1,9 @@
 import { z } from "zod";
 
 import { mailErrors } from "./errors";
+import type { GmailHistoryListResponse, GmailWatchResponse } from "./gmail-schemas";
 import {
+  gmailHistoryListResponseSchema,
   gmailLabelResponseSchema,
   gmailLabelsListResponseSchema,
   gmailListMessagesResponseSchema,
@@ -9,6 +11,7 @@ import {
   gmailProfileResponseSchema,
   gmailSendResponseSchema,
   gmailThreadResponseSchema,
+  gmailWatchResponseSchema,
 } from "./gmail-schemas";
 
 const gmailApiBaseUrl = "https://gmail.googleapis.com/gmail/v1";
@@ -240,6 +243,109 @@ export async function sendGmailMessage({
   }
 
   return parsedSend.data;
+}
+
+export async function listGmailHistory({
+  accessToken,
+  pageToken,
+  startHistoryId,
+  userId,
+}: {
+  readonly accessToken: string;
+  readonly pageToken?: string;
+  readonly startHistoryId: string;
+  readonly userId: string;
+}): Promise<GmailHistoryListResponse> {
+  const searchParams = new URLSearchParams({
+    startHistoryId,
+  });
+
+  if (pageToken) {
+    searchParams.set("pageToken", pageToken);
+  }
+
+  const response = await fetchGmail(
+    accessToken,
+    `/users/${encodeURIComponent(userId)}/history?${searchParams.toString()}`,
+  );
+
+  if (!response.ok) {
+    throw mailErrors.GMAIL_HISTORY_LIST_FAILED({
+      cause: new Error(`Gmail users.history.list endpoint returned HTTP ${response.status}`),
+      internal: {
+        dependencyStatus: response.status,
+        startHistoryId,
+        userId,
+      },
+    });
+  }
+
+  const parsedHistory = gmailHistoryListResponseSchema.safeParse(await response.json());
+  if (!parsedHistory.success) {
+    throw mailErrors.GMAIL_HISTORY_LIST_RESPONSE_INVALID({
+      cause: new Error(z.prettifyError(parsedHistory.error)),
+      internal: {
+        startHistoryId,
+        userId,
+      },
+    });
+  }
+
+  return parsedHistory.data;
+}
+
+export async function watchGmailMailbox({
+  accessToken,
+  labelIds,
+  topicName,
+  userId,
+}: {
+  readonly accessToken: string;
+  readonly labelIds?: readonly string[];
+  readonly topicName: string;
+  readonly userId: string;
+}): Promise<GmailWatchResponse> {
+  const response = await fetchGmail(accessToken, `/users/${encodeURIComponent(userId)}/watch`, {
+    body: JSON.stringify(createGmailWatchBody(topicName, labelIds)),
+    headers: {
+      "content-type": "application/json",
+    },
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    throw mailErrors.GMAIL_WATCH_FAILED({
+      cause: new Error(`Gmail users.watch endpoint returned HTTP ${response.status}`),
+      internal: {
+        dependencyStatus: response.status,
+        topicName,
+        userId,
+      },
+    });
+  }
+
+  const parsedWatch = gmailWatchResponseSchema.safeParse(await response.json());
+  if (!parsedWatch.success) {
+    throw mailErrors.GMAIL_WATCH_RESPONSE_INVALID({
+      cause: new Error(z.prettifyError(parsedWatch.error)),
+      internal: {
+        topicName,
+        userId,
+      },
+    });
+  }
+
+  return parsedWatch.data;
+}
+
+function createGmailWatchBody(topicName: string, labelIds: readonly string[] | undefined) {
+  const hasLabelFilter = Boolean(labelIds?.length);
+
+  return {
+    labelFilterBehavior: hasLabelFilter ? "INCLUDE" : undefined,
+    labelIds,
+    topicName,
+  };
 }
 
 async function fetchGmail(accessToken: string, path: string, init?: RequestInit) {

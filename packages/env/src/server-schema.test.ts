@@ -11,6 +11,7 @@ const requiredEnv = {
   DATABASE_URL: "postgresql://user:password@localhost:5432/test_db",
   GOOGLE_OAUTH_CLIENT_ID: "test-google-client-id",
   GOOGLE_OAUTH_CLIENT_SECRET: "test-google-client-secret",
+  GMAIL_PUBSUB_TOPIC_NAME: "projects/rapid-snowfall-498906-b9/topics/gmail-demo",
   OPENROUTER_API_KEY: "sk-or-v1-real-shaped-test",
   LANGSMITH_API_KEY: "lsv2_pt_real-shaped-test",
   LANGSMITH_TRACING: "true",
@@ -40,6 +41,16 @@ test("server env contract requires Google OAuth values", () => {
 
   assert.equal(result.success, false);
   assert.equal(result.error?.issues[0]?.path.join("."), "GOOGLE_OAUTH_CLIENT_SECRET");
+});
+
+test("server env contract requires Gmail Pub/Sub topic", () => {
+  const result = serverEnvSchema.safeParse({
+    ...requiredEnv,
+    GMAIL_PUBSUB_TOPIC_NAME: "",
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.error?.issues[0]?.path.join("."), "GMAIL_PUBSUB_TOPIC_NAME");
 });
 
 test("server env contract pins the only allowed OpenRouter model", () => {
