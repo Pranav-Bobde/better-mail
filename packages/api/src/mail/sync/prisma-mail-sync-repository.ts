@@ -21,6 +21,7 @@ import type { MailSyncRepository } from "./processor";
 
 const gmailProviderId = "google";
 const gmailMailboxScopeId = "mailbox";
+const gmailThreadTransactionTimeoutMs = 30_000;
 const systemLabelIds = new Set([
   "CATEGORY_FORUMS",
   "CATEGORY_PERSONAL",
@@ -464,57 +465,60 @@ async function applyGmailThread(
   const latestMessage = getLatestGmailMessage(input.thread);
   const threadFlags = getThreadFlags(input.thread.messages);
 
-  await client.$transaction(async (tx) => {
-    const mailThread = await tx.mailThread.upsert({
-      create: {
-        ...threadFlags,
-        latestMessageAt: getGmailMessageDate(latestMessage),
-        mailAccountId: input.mailAccountId,
-        messageCount: input.thread.messages.length,
-        providerThreadId: input.threadId,
-      },
-      update: {
-        ...threadFlags,
-        deletedAt: null,
-        latestMessageAt: getGmailMessageDate(latestMessage),
-        messageCount: input.thread.messages.length,
-      },
-      where: {
-        mailAccountId_providerThreadId: {
+  await client.$transaction(
+    async (tx) => {
+      const mailThread = await tx.mailThread.upsert({
+        create: {
+          ...threadFlags,
+          latestMessageAt: getGmailMessageDate(latestMessage),
           mailAccountId: input.mailAccountId,
+          messageCount: input.thread.messages.length,
           providerThreadId: input.threadId,
         },
-      },
-    });
-
-    for (const message of input.thread.messages) {
-      await upsertGmailMessage(tx, {
-        mailAccountId: input.mailAccountId,
-        mailThreadId: mailThread.id,
-        message,
-      });
-    }
-
-    const internalLatestMessage = await tx.mailMessage.findUnique({
-      where: {
-        mailAccountId_providerMessageId: {
-          mailAccountId: input.mailAccountId,
-          providerMessageId: input.latestMessageId,
-        },
-      },
-    });
-
-    if (internalLatestMessage) {
-      await tx.mailThread.update({
-        data: {
-          latestMessageId: internalLatestMessage.id,
+        update: {
+          ...threadFlags,
+          deletedAt: null,
+          latestMessageAt: getGmailMessageDate(latestMessage),
+          messageCount: input.thread.messages.length,
         },
         where: {
-          id: mailThread.id,
+          mailAccountId_providerThreadId: {
+            mailAccountId: input.mailAccountId,
+            providerThreadId: input.threadId,
+          },
         },
       });
-    }
-  });
+
+      for (const message of input.thread.messages) {
+        await upsertGmailMessage(tx, {
+          mailAccountId: input.mailAccountId,
+          mailThreadId: mailThread.id,
+          message,
+        });
+      }
+
+      const internalLatestMessage = await tx.mailMessage.findUnique({
+        where: {
+          mailAccountId_providerMessageId: {
+            mailAccountId: input.mailAccountId,
+            providerMessageId: input.latestMessageId,
+          },
+        },
+      });
+
+      if (internalLatestMessage) {
+        await tx.mailThread.update({
+          data: {
+            latestMessageId: internalLatestMessage.id,
+          },
+          where: {
+            id: mailThread.id,
+          },
+        });
+      }
+    },
+    { timeout: gmailThreadTransactionTimeoutMs },
+  );
 }
 
 async function upsertGmailMessage(

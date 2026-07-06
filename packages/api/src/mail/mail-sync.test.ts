@@ -8,6 +8,7 @@ setRequiredTestEnv();
 const { gmailPubSubPushEnvelopeSchema, mailSyncEventSchema } = await import("./sync/contracts");
 const { createGmailWebhookFields, createMailSyncQueueEnqueuedFields, createMailSyncWorkerFields } =
   await import("./sync/observability");
+const { createPrismaMailSyncRepository } = await import("./sync/prisma-mail-sync-repository");
 const { MailSyncLockBusyError, processMailSyncEvent } = await import("./sync/processor");
 const { gmailThreadResponseSchema } = await import("./gmail-schemas");
 
@@ -316,6 +317,24 @@ test("runs Gmail incremental sync from stored cursor and updates cache before cu
   ]);
 });
 
+test("uses extended Prisma transaction timeout for Gmail thread cache writes", async () => {
+  const transactionOptions: unknown[] = [];
+  const repository = createPrismaMailSyncRepository(
+    createPrismaClientForThreadApplyTest(transactionOptions) as unknown as Parameters<
+      typeof createPrismaMailSyncRepository
+    >[0],
+  );
+
+  await repository.applyGmailThread({
+    latestMessageId: "message-2",
+    mailAccountId: "mail-account-id",
+    thread: createRealShapedGmailThread(),
+    threadId: "thread-1",
+  });
+
+  assert.deepEqual(transactionOptions, [{ timeout: 30000 }]);
+});
+
 function createMailSyncRepository({
   lockResult = { acquired: true as const },
   mutableOperations = [],
@@ -363,6 +382,40 @@ function createMailSyncRepository({
       mutableOperations.push(`update-cursor:${input.cursorValue}`);
     },
     updateGmailWatch: async () => {},
+  };
+}
+
+function createPrismaClientForThreadApplyTest(transactionOptions: unknown[]) {
+  const transactionClient = {
+    mailLabel: {
+      upsert: async (input: { readonly create: { readonly providerLabelId: string } }) => ({
+        id: `mail-label-${input.create.providerLabelId}`,
+      }),
+    },
+    mailMessage: {
+      findUnique: async () => ({ id: "internal-message-2" }),
+      upsert: async (input: { readonly create: { readonly providerMessageId: string } }) => ({
+        id: `internal-${input.create.providerMessageId}`,
+      }),
+    },
+    mailMessageLabel: {
+      create: async () => ({}),
+      deleteMany: async () => ({}),
+    },
+    mailThread: {
+      update: async () => ({}),
+      upsert: async () => ({ id: "mail-thread-id" }),
+    },
+  };
+
+  return {
+    $transaction: async (
+      callback: (client: typeof transactionClient) => Promise<unknown>,
+      options?: unknown,
+    ) => {
+      transactionOptions.push(options);
+      return callback(transactionClient);
+    },
   };
 }
 
