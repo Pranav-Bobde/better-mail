@@ -640,7 +640,7 @@ test("loads only one Gmail history page per provider call", async () => {
       nextPageToken: "next-page-token",
     });
     assert.equal(requestCount, 1);
-    assert.equal(new URL(requestedUrl).searchParams.get("maxResults"), "25");
+    assert.equal(new URL(requestedUrl).searchParams.get("maxResults"), "5");
   } finally {
     globalThis.fetch = originalFetch;
   }
