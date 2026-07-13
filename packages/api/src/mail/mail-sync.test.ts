@@ -596,8 +596,10 @@ test("maps Gmail threads.get 404 to an unavailable sync thread", async () => {
 test("loads only one Gmail history page per provider call", async () => {
   const originalFetch = globalThis.fetch;
   let requestCount = 0;
-  globalThis.fetch = async () => {
+  let requestedUrl = "";
+  globalThis.fetch = async (input) => {
     requestCount += 1;
+    requestedUrl = String(input);
     return Response.json({
       history: [
         {
@@ -638,6 +640,7 @@ test("loads only one Gmail history page per provider call", async () => {
       nextPageToken: "next-page-token",
     });
     assert.equal(requestCount, 1);
+    assert.equal(new URL(requestedUrl).searchParams.get("maxResults"), "25");
   } finally {
     globalThis.fetch = originalFetch;
   }

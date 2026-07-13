@@ -268,16 +268,19 @@ export async function sendGmailMessage({
 
 export async function listGmailHistory({
   accessToken,
+  maxResults,
   pageToken,
   startHistoryId,
   userId,
 }: {
   readonly accessToken: string;
+  readonly maxResults: number;
   readonly pageToken?: string;
   readonly startHistoryId: string;
   readonly userId: string;
 }): Promise<GmailHistoryListResponse> {
   const searchParams = new URLSearchParams({
+    maxResults: String(maxResults),
     startHistoryId,
   });
 

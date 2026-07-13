@@ -4,6 +4,7 @@ import { getGmailThreadIfExists, listGmailHistory, watchGmailMailbox } from "../
 import type { GmailSyncProvider } from "./processor";
 
 const gmailUserId = "me";
+const gmailHistoryPageMaxResults = 25;
 
 export function createGmailSyncProvider(topicName = env.GMAIL_PUBSUB_TOPIC_NAME) {
   return {
@@ -12,6 +13,7 @@ export function createGmailSyncProvider(topicName = env.GMAIL_PUBSUB_TOPIC_NAME)
     listHistory: (accessToken: string, startHistoryId: string) =>
       listGmailHistory({
         accessToken,
+        maxResults: gmailHistoryPageMaxResults,
         startHistoryId,
         userId: gmailUserId,
       }),
