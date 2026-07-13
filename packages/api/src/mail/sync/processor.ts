@@ -1,4 +1,5 @@
 import type { GmailThread } from "../gmail-schemas";
+import type { MailRealtimeNotifier } from "../realtime/contracts";
 import { mailSyncEventSchema, type MailSyncEvent } from "./contracts";
 
 const lockTtlMs = 5 * 60 * 1000;
@@ -77,6 +78,7 @@ export type MailSyncProcessorDependencies = {
   readonly gmailProvider: GmailSyncProvider;
   readonly lockOwnerId: string;
   readonly now: Date;
+  readonly realtimeNotifier: MailRealtimeNotifier;
   readonly repository: MailSyncRepository;
   readonly tokenProvider: MailSyncTokenProvider;
 };
@@ -190,10 +192,11 @@ async function syncGmailHistory(
     token.accessToken,
     mailAccount.syncCursor.cursorValue,
   );
+  const changedThreadIds = getChangedThreadIds(historyResponse.history ?? []);
 
   await applyChangedGmailThreads({
     accessToken: token.accessToken,
-    changedThreadIds: getChangedThreadIds(historyResponse.history ?? []),
+    changedThreadIds,
     dependencies,
     mailAccountId: mailAccount.id,
   });
@@ -203,6 +206,15 @@ async function syncGmailHistory(
       cursorValue: historyResponse.historyId,
       syncCursorId: mailAccount.syncCursor.id,
     });
+
+    if (changedThreadIds.length > 0) {
+      await dependencies.realtimeNotifier.publishMailboxChanged({
+        mailAccountId: mailAccount.id,
+        mailboxVersion: historyResponse.historyId,
+        type: "mailboxChanged",
+        userId: mailAccount.userId,
+      });
+    }
   }
 }
 

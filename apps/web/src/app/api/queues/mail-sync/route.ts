@@ -10,6 +10,7 @@ import { MailSyncLockBusyError, processMailSyncEvent } from "@code-main/api/mail
 import { handleCallback } from "@vercel/queue";
 
 import { log, withEvlog } from "@/shared/lib/evlog";
+import { ablyMailRealtimeNotifier } from "@/shared/lib/mail-realtime-runtime";
 
 const maxDeliveryCount = 10;
 const lockBusyRetrySeconds = 30;
@@ -23,6 +24,7 @@ const handleMailSyncQueueCallback = handleCallback(
         gmailProvider: createGmailSyncProvider(),
         lockOwnerId: metadata.messageId,
         now: new Date(),
+        realtimeNotifier: ablyMailRealtimeNotifier,
         repository: createPrismaMailSyncRepository(),
         tokenProvider: {
           getGoogleAccessToken: async (input) => {

@@ -370,6 +370,7 @@ test("throws a retryable lock error when the cursor is already locked", async ()
           gmailProvider: createGmailSyncProvider(),
           lockOwnerId: "queue-message-1",
           now: new Date("2026-06-13T12:00:00.000Z"),
+          realtimeNotifier: createRealtimeNotifier(),
           repository,
           tokenProvider: createTokenProvider(),
         },
@@ -399,6 +400,13 @@ test("runs Gmail incremental sync from stored cursor and updates cache before cu
       gmailProvider,
       lockOwnerId: "queue-message-1",
       now: new Date("2026-06-13T12:00:00.000Z"),
+      realtimeNotifier: {
+        publishMailboxChanged: async (input) => {
+          mutableOperations.push(
+            `publish-mailbox-changed:${input.userId}:${input.mailAccountId}:${input.mailboxVersion}`,
+          );
+        },
+      },
       repository,
       tokenProvider,
     },
@@ -411,6 +419,7 @@ test("runs Gmail incremental sync from stored cursor and updates cache before cu
     "get-thread:thread-1",
     "apply-thread:thread-1:message-2",
     "update-cursor:176009",
+    "publish-mailbox-changed:user-id:mail-account-id:176009",
     "release-lock:cursor-id",
   ]);
 });
@@ -548,6 +557,12 @@ function createGmailSyncProvider({
       expiration: "1780000000000",
       historyId: "176010",
     }),
+  };
+}
+
+function createRealtimeNotifier() {
+  return {
+    publishMailboxChanged: async () => {},
   };
 }
 

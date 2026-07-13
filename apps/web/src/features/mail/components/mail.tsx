@@ -39,7 +39,7 @@ import { Separator } from "@code-main/ui/components/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@code-main/ui/components/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@code-main/ui/components/tooltip";
 import { cn } from "@code-main/ui/lib/utils";
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { AccountSwitcher } from "@/features/mail/components/account-switcher";
 import {
@@ -74,7 +74,9 @@ import {
 } from "@/features/mail/components/mail-layout";
 import { MailList } from "@/features/mail/components/mail-list";
 import { MailLoading } from "@/features/mail/components/mail-loading";
+import { createMailboxQueryOptions } from "@/features/mail/components/mailbox-query-options";
 import { Nav, type NavLink } from "@/features/mail/components/nav";
+import { useMailboxRealtimeInvalidation } from "@/features/mail/realtime/use-mailbox-realtime-invalidation";
 import { ModeToggle } from "@/shared/components/mode-toggle";
 import { authClient } from "@/shared/utils/auth-client";
 import { orpc } from "@/shared/utils/orpc";
@@ -167,6 +169,8 @@ function MailWorkspace({
   readonly navCollapsedSize: number;
   readonly threadId: string;
 }) {
+  useMailboxRealtimeInvalidation();
+
   const [isCollapsed, setIsCollapsed] = React.useState(defaultCollapsed);
   const [selected, setSelected] = React.useState<MailItem["id"] | null>(mails[0].id);
   const [isAiOpen, setIsAiOpen] = React.useState(false);
@@ -821,21 +825,7 @@ function isUnreadMail(item: MailItem) {
 
 function useMailboxData(searchQuery: string, view: MailView) {
   const mailboxQuery = useQuery(
-    orpc.mail.getMailbox.queryOptions({
-      input: {
-        query: searchQuery,
-        view,
-      },
-      meta: {
-        silentError: true,
-      },
-      // Keep the previous (real) results visible while a new query loads so the
-      // list never flashes back to fallback/demo data during search.
-      placeholderData: keepPreviousData,
-      refetchInterval: (query) => (query.state.data?.status === "ok" ? 10_000 : false),
-      retry: false,
-      staleTime: 5_000,
-    }),
+    orpc.mail.getMailbox.queryOptions(createMailboxQueryOptions({ searchQuery, view })),
   );
 
   const mailbox = mailboxQuery.data?.status === "ok" ? mailboxQuery.data.data : null;
