@@ -426,6 +426,71 @@ test("runs Gmail incremental sync from stored cursor and updates cache before cu
   ]);
 });
 
+test("checkpoints one Gmail history page and requests a continuation", async () => {
+  const mutableOperations: string[] = [];
+  const repository = createMailSyncRepository({ mutableOperations });
+  const gmailProvider = {
+    ...createGmailSyncProvider({ mutableOperations }),
+    listHistory: async (_accessToken: string, startHistoryId: string) => {
+      mutableOperations.push(`list-history:${startHistoryId}`);
+      return {
+        history: [
+          {
+            id: "176009",
+            messagesAdded: [
+              {
+                message: {
+                  id: "message-2",
+                  threadId: "thread-1",
+                },
+              },
+            ],
+          },
+        ],
+        historyId: "176999",
+        nextPageToken: "next-page-token",
+      };
+    },
+  };
+
+  const result = await processMailSyncEvent(
+    {
+      mailAccountId: "mail-account-id",
+      type: "GMAIL_INCREMENTAL_SYNC_REQUESTED",
+    },
+    {
+      gmailProvider,
+      lockOwnerId: "queue-message-1",
+      now: new Date("2026-06-13T12:00:00.000Z"),
+      realtimeNotifier: {
+        publishMailboxChanged: async (input) => {
+          mutableOperations.push(`publish-mailbox-changed:${input.mailboxVersion}`);
+        },
+      },
+      repository,
+      tokenProvider: createTokenProvider({ mutableOperations }),
+    },
+  );
+
+  assert.deepEqual(mutableOperations, [
+    "acquire-lock:cursor-id",
+    "get-token:user-id:google-account-id",
+    "list-history:176001",
+    "get-thread:thread-1",
+    "apply-thread:thread-1:message-2",
+    "update-cursor:176009",
+    "publish-mailbox-changed:176009",
+    "release-lock:cursor-id",
+  ]);
+  assert.deepEqual(result, {
+    continuationEvent: {
+      mailAccountId: "mail-account-id",
+      notificationHistoryId: "176009",
+      type: "GMAIL_INCREMENTAL_SYNC_REQUESTED",
+    },
+  });
+});
+
 test("marks unavailable Gmail history threads deleted and continues sync", async () => {
   const mutableOperations: string[] = [];
   const repository = {
@@ -523,6 +588,56 @@ test("maps Gmail threads.get 404 to an unavailable sync thread", async () => {
     const gmailProvider = createRuntimeGmailSyncProvider("projects/demo-project/topics/gmail-demo");
 
     assert.equal(await gmailProvider.getThread("access-token", "deleted-thread"), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("loads only one Gmail history page per provider call", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestCount = 0;
+  globalThis.fetch = async () => {
+    requestCount += 1;
+    return Response.json({
+      history: [
+        {
+          id: "176009",
+          messagesAdded: [
+            {
+              message: {
+                id: "message-2",
+                threadId: "thread-1",
+              },
+            },
+          ],
+        },
+      ],
+      historyId: "176999",
+      nextPageToken: requestCount === 1 ? "next-page-token" : undefined,
+    });
+  };
+
+  try {
+    const gmailProvider = createRuntimeGmailSyncProvider("projects/demo-project/topics/gmail-demo");
+
+    assert.deepEqual(await gmailProvider.listHistory("access-token", "176001"), {
+      history: [
+        {
+          id: "176009",
+          messagesAdded: [
+            {
+              message: {
+                id: "message-2",
+                threadId: "thread-1",
+              },
+            },
+          ],
+        },
+      ],
+      historyId: "176999",
+      nextPageToken: "next-page-token",
+    });
+    assert.equal(requestCount, 1);
   } finally {
     globalThis.fetch = originalFetch;
   }

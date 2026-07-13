@@ -10,6 +10,7 @@ import { MailSyncLockBusyError, processMailSyncEvent } from "@code-main/api/mail
 import { handleCallback } from "@vercel/queue";
 
 import { log, withEvlog } from "@/shared/lib/evlog";
+import { vercelMailSyncBroker } from "@/shared/lib/mail-sync-queue";
 import { ablyMailRealtimeNotifier } from "@/shared/lib/mail-realtime-runtime";
 
 const maxDeliveryCount = 10;
@@ -20,7 +21,7 @@ const handleMailSyncQueueCallback = handleCallback(
     const event = mailSyncEventSchema.parse(rawEvent);
 
     try {
-      await processMailSyncEvent(event, {
+      const result = await processMailSyncEvent(event, {
         gmailProvider: createGmailSyncProvider(),
         lockOwnerId: metadata.messageId,
         now: new Date(),
@@ -43,6 +44,10 @@ const handleMailSyncQueueCallback = handleCallback(
           },
         },
       });
+
+      if (result?.continuationEvent) {
+        await vercelMailSyncBroker.enqueueMailSyncEvent(result.continuationEvent);
+      }
     } catch (error) {
       logMailSyncWorkerFields(
         createMailSyncWorkerFields({

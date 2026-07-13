@@ -62,6 +62,7 @@ export type GmailSyncProvider = {
   ) => Promise<{
     readonly history?: readonly GmailHistoryRecord[];
     readonly historyId?: string;
+    readonly nextPageToken?: string;
   }>;
   readonly watchMailbox: (accessToken: string) => Promise<{
     readonly expiration: string;
@@ -114,8 +115,7 @@ export async function processMailSyncEvent(
 
   switch (event.type) {
     case "GMAIL_INCREMENTAL_SYNC_REQUESTED":
-      await processGmailIncrementalSync(event, dependencies);
-      return;
+      return processGmailIncrementalSync(event, dependencies);
     case "GMAIL_BOOTSTRAP_SYNC_REQUESTED":
       return;
     case "GMAIL_RENEW_WATCH_REQUESTED":
@@ -174,7 +174,7 @@ async function processGmailIncrementalSync(
   }
 
   try {
-    await syncGmailHistory(mailAccount, dependencies);
+    return await syncGmailHistory(mailAccount, dependencies);
   } finally {
     await dependencies.repository.releaseSyncLock({
       lockOwnerId: dependencies.lockOwnerId,
@@ -197,7 +197,8 @@ async function syncGmailHistory(
     token.accessToken,
     mailAccount.syncCursor.cursorValue,
   );
-  const changedThreadIds = getChangedThreadIds(historyResponse.history ?? []);
+  const history = historyResponse.history ?? [];
+  const changedThreadIds = getChangedThreadIds(history);
 
   await applyChangedGmailThreads({
     accessToken: token.accessToken,
@@ -206,21 +207,73 @@ async function syncGmailHistory(
     mailAccountId: mailAccount.id,
   });
 
-  if (historyResponse.historyId) {
-    await dependencies.repository.updateSyncCursor({
-      cursorValue: historyResponse.historyId,
-      syncCursorId: mailAccount.syncCursor.id,
-    });
+  const checkpoint = getGmailHistoryCheckpoint(historyResponse, history);
+  await saveGmailHistoryCheckpoint({
+    changedThreadCount: changedThreadIds.length,
+    checkpoint,
+    dependencies,
+    mailAccount,
+  });
 
-    if (changedThreadIds.length > 0) {
-      await dependencies.realtimeNotifier.publishMailboxChanged({
-        mailAccountId: mailAccount.id,
-        mailboxVersion: historyResponse.historyId,
-        type: "mailboxChanged",
-        userId: mailAccount.userId,
-      });
-    }
+  return createGmailSyncContinuation(mailAccount.id, checkpoint, historyResponse.nextPageToken);
+}
+
+async function saveGmailHistoryCheckpoint(input: {
+  readonly changedThreadCount: number;
+  readonly checkpoint: string | undefined;
+  readonly dependencies: MailSyncProcessorDependencies;
+  readonly mailAccount: NonNullable<
+    Awaited<ReturnType<MailSyncRepository["getActiveMailAccountWithCursor"]>>
+  >;
+}) {
+  if (!input.checkpoint) {
+    return;
   }
+
+  await input.dependencies.repository.updateSyncCursor({
+    cursorValue: input.checkpoint,
+    syncCursorId: input.mailAccount.syncCursor.id,
+  });
+
+  if (input.changedThreadCount === 0) {
+    return;
+  }
+
+  await input.dependencies.realtimeNotifier.publishMailboxChanged({
+    mailAccountId: input.mailAccount.id,
+    mailboxVersion: input.checkpoint,
+    type: "mailboxChanged",
+    userId: input.mailAccount.userId,
+  });
+}
+
+function getGmailHistoryCheckpoint(
+  response: Awaited<ReturnType<GmailSyncProvider["listHistory"]>>,
+  history: readonly GmailHistoryRecord[],
+) {
+  if (!response.nextPageToken) {
+    return response.historyId;
+  }
+
+  return history.findLast((record) => record.id)?.id;
+}
+
+function createGmailSyncContinuation(
+  mailAccountId: string,
+  checkpoint: string | undefined,
+  nextPageToken: string | undefined,
+) {
+  if (!checkpoint || !nextPageToken) {
+    return undefined;
+  }
+
+  return {
+    continuationEvent: {
+      mailAccountId,
+      notificationHistoryId: checkpoint,
+      type: "GMAIL_INCREMENTAL_SYNC_REQUESTED" as const,
+    },
+  };
 }
 
 async function applyChangedGmailThreads(input: {
