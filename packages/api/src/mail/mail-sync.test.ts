@@ -381,6 +381,42 @@ test("throws a retryable lock error when the cursor is already locked", async ()
   );
 });
 
+test("renews Gmail watch without advancing the sync cursor", async () => {
+  const mutableOperations: string[] = [];
+  const repository = {
+    ...createMailSyncRepository({ mutableOperations }),
+    updateGmailWatch: async (input: {
+      readonly mailAccountId: string;
+      readonly watchExpiresAt: Date;
+    }) => {
+      assert.deepEqual(Object.keys(input).sort(), ["mailAccountId", "watchExpiresAt"]);
+      mutableOperations.push(
+        `update-watch:${input.mailAccountId}:${input.watchExpiresAt.toISOString()}`,
+      );
+    },
+  };
+
+  await processMailSyncEvent(
+    {
+      mailAccountId: "mail-account-id",
+      type: "GMAIL_RENEW_WATCH_REQUESTED",
+    },
+    {
+      gmailProvider: createGmailSyncProvider(),
+      lockOwnerId: "queue-message-1",
+      now: new Date("2026-06-13T12:00:00.000Z"),
+      realtimeNotifier: createRealtimeNotifier(),
+      repository,
+      tokenProvider: createTokenProvider({ mutableOperations }),
+    },
+  );
+
+  assert.deepEqual(mutableOperations, [
+    "get-token:user-id:google-account-id",
+    "update-watch:mail-account-id:2026-05-28T20:26:40.000Z",
+  ]);
+});
+
 test("runs Gmail incremental sync from stored cursor and updates cache before cursor", async () => {
   const mutableOperations: string[] = [];
   const repository = createMailSyncRepository({

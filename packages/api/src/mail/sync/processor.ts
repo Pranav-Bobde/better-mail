@@ -48,7 +48,6 @@ export type MailSyncRepository = {
     readonly syncCursorId: string;
   }) => Promise<void>;
   readonly updateGmailWatch: (input: {
-    readonly cursorValue: string;
     readonly mailAccountId: string;
     readonly watchExpiresAt: Date;
   }) => Promise<void>;
@@ -145,7 +144,6 @@ async function processGmailWatchRenewal(
   const watchResponse = await dependencies.gmailProvider.watchMailbox(token.accessToken);
 
   await dependencies.repository.updateGmailWatch({
-    cursorValue: watchResponse.historyId,
     mailAccountId: mailAccount.id,
     watchExpiresAt: new Date(Number(watchResponse.expiration)),
   });

@@ -220,7 +220,6 @@ export function createPrismaMailSyncRepository(client: PrismaClient = prisma) {
       });
     },
     updateGmailWatch: async (input: {
-      readonly cursorValue: string;
       readonly mailAccountId: string;
       readonly watchExpiresAt: Date;
     }) => {
@@ -230,19 +229,6 @@ export function createPrismaMailSyncRepository(client: PrismaClient = prisma) {
         },
         where: {
           id: input.mailAccountId,
-        },
-      });
-      await client.mailSyncCursor.update({
-        data: {
-          cursorValue: input.cursorValue,
-        },
-        where: {
-          mailAccountId_cursorKind_scopeType_providerScopeId: {
-            cursorKind: MailSyncCursorKind.GMAIL_HISTORY_ID,
-            mailAccountId: input.mailAccountId,
-            providerScopeId: gmailMailboxScopeId,
-            scopeType: MailSyncScopeType.MAILBOX,
-          },
         },
       });
     },
