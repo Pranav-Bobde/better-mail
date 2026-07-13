@@ -107,14 +107,35 @@ export async function listGmailThreads({
 }
 
 export async function getGmailThread(accessToken: string, userId: string, threadId: string) {
+  const response = await requestGmailThread(accessToken, userId, threadId);
+  return parseGmailThreadResponse(response, userId, threadId);
+}
+
+export async function getGmailThreadIfExists(
+  accessToken: string,
+  userId: string,
+  threadId: string,
+) {
+  const response = await requestGmailThread(accessToken, userId, threadId);
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  return parseGmailThreadResponse(response, userId, threadId);
+}
+
+async function requestGmailThread(accessToken: string, userId: string, threadId: string) {
   const searchParams = new URLSearchParams({
     format: "full",
   });
   const path = `/users/${encodeURIComponent(userId)}/threads/${encodeURIComponent(
     threadId,
   )}?${searchParams.toString()}`;
-  const response = await fetchGmail(accessToken, path);
+  return fetchGmail(accessToken, path);
+}
 
+async function parseGmailThreadResponse(response: Response, userId: string, threadId: string) {
   if (!response.ok) {
     throw mailErrors.GMAIL_GET_THREAD_FAILED({
       cause: new Error(`Gmail threads.get endpoint returned HTTP ${response.status}`),

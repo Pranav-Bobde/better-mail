@@ -14,6 +14,8 @@ const {
   createMailSyncWorkerFields,
 } = await import("./sync/observability");
 const { createPrismaMailSyncRepository } = await import("./sync/prisma-mail-sync-repository");
+const { createGmailSyncProvider: createRuntimeGmailSyncProvider } =
+  await import("./sync/gmail-sync-provider");
 const { MailSyncLockBusyError, processMailSyncEvent } = await import("./sync/processor");
 const { gmailThreadResponseSchema } = await import("./gmail-schemas");
 
@@ -424,6 +426,108 @@ test("runs Gmail incremental sync from stored cursor and updates cache before cu
   ]);
 });
 
+test("marks unavailable Gmail history threads deleted and continues sync", async () => {
+  const mutableOperations: string[] = [];
+  const repository = {
+    ...createMailSyncRepository({ mutableOperations }),
+    markGmailThreadDeleted: async (input: {
+      readonly mailAccountId: string;
+      readonly threadId: string;
+    }) => {
+      mutableOperations.push(`mark-thread-deleted:${input.threadId}`);
+    },
+  };
+  const gmailProvider = {
+    ...createGmailSyncProvider({ mutableOperations }),
+    getThread: async (_accessToken: string, threadId: string) => {
+      mutableOperations.push(`get-thread:${threadId}`);
+      return threadId === "deleted-thread" ? null : createRealShapedGmailThread();
+    },
+    listHistory: async (_accessToken: string, startHistoryId: string) => {
+      mutableOperations.push(`list-history:${startHistoryId}`);
+      return {
+        history: [
+          {
+            id: "176009",
+            messagesAdded: [
+              {
+                message: {
+                  id: "message-2",
+                  threadId: "thread-1",
+                },
+              },
+            ],
+            messagesDeleted: [
+              {
+                message: {
+                  id: "deleted-message",
+                  threadId: "deleted-thread",
+                },
+              },
+            ],
+          },
+        ],
+        historyId: "176009",
+      };
+    },
+  };
+
+  await processMailSyncEvent(
+    {
+      mailAccountId: "mail-account-id",
+      type: "GMAIL_INCREMENTAL_SYNC_REQUESTED",
+    },
+    {
+      gmailProvider,
+      lockOwnerId: "queue-message-1",
+      now: new Date("2026-06-13T12:00:00.000Z"),
+      realtimeNotifier: {
+        publishMailboxChanged: async () => {
+          mutableOperations.push("publish-mailbox-changed");
+        },
+      },
+      repository,
+      tokenProvider: createTokenProvider({ mutableOperations }),
+    },
+  );
+
+  assert.deepEqual(mutableOperations, [
+    "acquire-lock:cursor-id",
+    "get-token:user-id:google-account-id",
+    "list-history:176001",
+    "get-thread:thread-1",
+    "apply-thread:thread-1:message-2",
+    "get-thread:deleted-thread",
+    "mark-thread-deleted:deleted-thread",
+    "update-cursor:176009",
+    "publish-mailbox-changed",
+    "release-lock:cursor-id",
+  ]);
+});
+
+test("maps Gmail threads.get 404 to an unavailable sync thread", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        error: {
+          code: 404,
+          message: "Requested entity was not found.",
+          status: "NOT_FOUND",
+        },
+      }),
+      { status: 404 },
+    );
+
+  try {
+    const gmailProvider = createRuntimeGmailSyncProvider("projects/demo-project/topics/gmail-demo");
+
+    assert.equal(await gmailProvider.getThread("access-token", "deleted-thread"), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("uses extended Prisma transaction timeout for Gmail thread cache writes", async () => {
   const transactionOptions: unknown[] = [];
   const repository = createPrismaMailSyncRepository(
@@ -474,6 +578,9 @@ function createMailSyncRepository({
       },
       userId: "user-id",
     }),
+    markGmailThreadDeleted: async (input: { readonly threadId: string }) => {
+      mutableOperations.push(`mark-thread-deleted:${input.threadId}`);
+    },
     releaseSyncLock: async (input: {
       readonly lockOwnerId: string;
       readonly syncCursorId: string;

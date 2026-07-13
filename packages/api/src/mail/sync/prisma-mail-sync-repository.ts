@@ -171,6 +171,20 @@ export function createPrismaMailSyncRepository(client: PrismaClient = prisma) {
         },
       });
     },
+    markGmailThreadDeleted: async (input: {
+      readonly mailAccountId: string;
+      readonly threadId: string;
+    }) => {
+      await client.mailThread.updateMany({
+        data: {
+          deletedAt: new Date(),
+        },
+        where: {
+          mailAccountId: input.mailAccountId,
+          providerThreadId: input.threadId,
+        },
+      });
+    },
     markMailAccountNeedsResync: async (mailAccountId: string) => {
       await client.mailAccount.update({
         data: {

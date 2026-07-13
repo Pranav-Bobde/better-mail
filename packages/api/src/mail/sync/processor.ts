@@ -34,6 +34,10 @@ export type MailSyncRepository = {
     };
     readonly userId: string;
   } | null>;
+  readonly markGmailThreadDeleted: (input: {
+    readonly mailAccountId: string;
+    readonly threadId: string;
+  }) => Promise<void>;
   readonly releaseSyncLock: (input: {
     readonly lockOwnerId: string;
     readonly syncCursorId: string;
@@ -50,7 +54,7 @@ export type MailSyncRepository = {
 };
 
 export type GmailSyncProvider = {
-  readonly getThread: (accessToken: string, threadId: string) => Promise<GmailThread>;
+  readonly getThread: (accessToken: string, threadId: string) => Promise<GmailThread | null>;
   readonly listHistory: (
     accessToken: string,
     startHistoryId: string,
@@ -226,6 +230,15 @@ async function applyChangedGmailThreads(input: {
 }) {
   for (const threadId of input.changedThreadIds) {
     const thread = await input.dependencies.gmailProvider.getThread(input.accessToken, threadId);
+
+    if (!thread) {
+      await input.dependencies.repository.markGmailThreadDeleted({
+        mailAccountId: input.mailAccountId,
+        threadId,
+      });
+      continue;
+    }
+
     await input.dependencies.repository.applyGmailThread({
       latestMessageId: getLatestGmailThreadMessageId(thread),
       mailAccountId: input.mailAccountId,

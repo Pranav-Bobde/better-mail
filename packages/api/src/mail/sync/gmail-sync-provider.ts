@@ -1,6 +1,6 @@
 import { env } from "@code-main/env/server";
 
-import { getGmailThread, listGmailHistory, watchGmailMailbox } from "../gmail-client";
+import { getGmailThreadIfExists, listGmailHistory, watchGmailMailbox } from "../gmail-client";
 import type { GmailHistoryListResponse } from "../gmail-schemas";
 import type { GmailSyncProvider } from "./processor";
 
@@ -9,7 +9,7 @@ const gmailUserId = "me";
 export function createGmailSyncProvider(topicName = env.GMAIL_PUBSUB_TOPIC_NAME) {
   return {
     getThread: (accessToken: string, threadId: string) =>
-      getGmailThread(accessToken, gmailUserId, threadId),
+      getGmailThreadIfExists(accessToken, gmailUserId, threadId),
     listHistory: (accessToken: string, startHistoryId: string) =>
       listAllGmailHistory(accessToken, startHistoryId),
     watchMailbox: (accessToken: string) =>
