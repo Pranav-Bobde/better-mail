@@ -21,7 +21,7 @@ import type { MailSyncRepository } from "./processor";
 
 const gmailProviderId = "google";
 const gmailMailboxScopeId = "mailbox";
-const gmailThreadTransactionTimeoutMs = 30_000;
+const gmailThreadTransactionTimeoutMs = 120_000;
 const systemLabelIds = new Set([
   "CATEGORY_FORUMS",
   "CATEGORY_PERSONAL",

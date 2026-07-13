@@ -739,7 +739,7 @@ test("processes changed Gmail threads with bounded concurrency", async () => {
   assert.equal(maxActiveThreadWrites, 1);
 });
 
-test("uses extended Prisma transaction timeout for Gmail thread cache writes", async () => {
+test("uses serverless-safe Prisma transaction timeout for Gmail thread cache writes", async () => {
   const transactionOptions: unknown[] = [];
   const repository = createPrismaMailSyncRepository(
     createPrismaClientForThreadApplyTest(transactionOptions) as unknown as Parameters<
@@ -754,7 +754,7 @@ test("uses extended Prisma transaction timeout for Gmail thread cache writes", a
     threadId: "thread-1",
   });
 
-  assert.deepEqual(transactionOptions, [{ timeout: 30000 }]);
+  assert.deepEqual(transactionOptions, [{ timeout: 120000 }]);
 });
 
 function createMailSyncRepository({
