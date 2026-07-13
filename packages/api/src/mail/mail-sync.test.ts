@@ -496,8 +496,8 @@ test("marks unavailable Gmail history threads deleted and continues sync", async
     "get-token:user-id:google-account-id",
     "list-history:176001",
     "get-thread:thread-1",
-    "apply-thread:thread-1:message-2",
     "get-thread:deleted-thread",
+    "apply-thread:thread-1:message-2",
     "mark-thread-deleted:deleted-thread",
     "update-cursor:176009",
     "publish-mailbox-changed",
@@ -526,6 +526,52 @@ test("maps Gmail threads.get 404 to an unavailable sync thread", async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("processes changed Gmail threads with bounded concurrency", async () => {
+  let activeThreadReads = 0;
+  let maxActiveThreadReads = 0;
+  const repository = createMailSyncRepository({});
+  const gmailProvider = {
+    ...createGmailSyncProvider(),
+    getThread: async () => {
+      activeThreadReads += 1;
+      maxActiveThreadReads = Math.max(maxActiveThreadReads, activeThreadReads);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      activeThreadReads -= 1;
+      return createRealShapedGmailThread();
+    },
+    listHistory: async () => ({
+      history: [
+        {
+          messagesAdded: Array.from({ length: 6 }, (_, index) => ({
+            message: {
+              id: `message-${index}`,
+              threadId: `thread-${index}`,
+            },
+          })),
+        },
+      ],
+      historyId: "176009",
+    }),
+  };
+
+  await processMailSyncEvent(
+    {
+      mailAccountId: "mail-account-id",
+      type: "GMAIL_INCREMENTAL_SYNC_REQUESTED",
+    },
+    {
+      gmailProvider,
+      lockOwnerId: "queue-message-1",
+      now: new Date("2026-06-13T12:00:00.000Z"),
+      realtimeNotifier: createRealtimeNotifier(),
+      repository,
+      tokenProvider: createTokenProvider(),
+    },
+  );
+
+  assert.equal(maxActiveThreadReads, 5);
 });
 
 test("uses extended Prisma transaction timeout for Gmail thread cache writes", async () => {

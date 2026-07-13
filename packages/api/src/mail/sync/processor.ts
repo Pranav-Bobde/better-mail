@@ -3,6 +3,7 @@ import type { MailRealtimeNotifier } from "../realtime/contracts";
 import { mailSyncEventSchema, type MailSyncEvent } from "./contracts";
 
 const lockTtlMs = 5 * 60 * 1000;
+const gmailThreadSyncConcurrency = 5;
 
 export class MailSyncLockBusyError extends Error {
   constructor(syncCursorId: string) {
@@ -228,24 +229,36 @@ async function applyChangedGmailThreads(input: {
   readonly dependencies: MailSyncProcessorDependencies;
   readonly mailAccountId: string;
 }) {
-  for (const threadId of input.changedThreadIds) {
-    const thread = await input.dependencies.gmailProvider.getThread(input.accessToken, threadId);
-
-    if (!thread) {
-      await input.dependencies.repository.markGmailThreadDeleted({
-        mailAccountId: input.mailAccountId,
-        threadId,
-      });
-      continue;
-    }
-
-    await input.dependencies.repository.applyGmailThread({
-      latestMessageId: getLatestGmailThreadMessageId(thread),
-      mailAccountId: input.mailAccountId,
-      thread,
-      threadId: thread.id,
-    });
+  for (let index = 0; index < input.changedThreadIds.length; index += gmailThreadSyncConcurrency) {
+    const threadIds = input.changedThreadIds.slice(index, index + gmailThreadSyncConcurrency);
+    await Promise.all(threadIds.map((threadId) => applyChangedGmailThread(input, threadId)));
   }
+}
+
+async function applyChangedGmailThread(
+  input: {
+    readonly accessToken: string;
+    readonly dependencies: MailSyncProcessorDependencies;
+    readonly mailAccountId: string;
+  },
+  threadId: string,
+) {
+  const thread = await input.dependencies.gmailProvider.getThread(input.accessToken, threadId);
+
+  if (!thread) {
+    await input.dependencies.repository.markGmailThreadDeleted({
+      mailAccountId: input.mailAccountId,
+      threadId,
+    });
+    return;
+  }
+
+  await input.dependencies.repository.applyGmailThread({
+    latestMessageId: getLatestGmailThreadMessageId(thread),
+    mailAccountId: input.mailAccountId,
+    thread,
+    threadId: thread.id,
+  });
 }
 
 function getChangedThreadIds(history: readonly GmailHistoryRecord[]) {
