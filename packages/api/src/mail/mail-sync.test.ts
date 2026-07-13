@@ -683,9 +683,19 @@ test("loads only one Gmail history page per provider call", async () => {
 });
 
 test("processes changed Gmail threads with bounded concurrency", async () => {
+  let activeThreadWrites = 0;
   let activeThreadReads = 0;
+  let maxActiveThreadWrites = 0;
   let maxActiveThreadReads = 0;
-  const repository = createMailSyncRepository({});
+  const repository = {
+    ...createMailSyncRepository({}),
+    applyGmailThread: async () => {
+      activeThreadWrites += 1;
+      maxActiveThreadWrites = Math.max(maxActiveThreadWrites, activeThreadWrites);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      activeThreadWrites -= 1;
+    },
+  };
   const gmailProvider = {
     ...createGmailSyncProvider(),
     getThread: async () => {
@@ -726,6 +736,7 @@ test("processes changed Gmail threads with bounded concurrency", async () => {
   );
 
   assert.equal(maxActiveThreadReads, 5);
+  assert.equal(maxActiveThreadWrites, 1);
 });
 
 test("uses extended Prisma transaction timeout for Gmail thread cache writes", async () => {

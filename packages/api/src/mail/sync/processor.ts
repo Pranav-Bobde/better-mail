@@ -282,7 +282,16 @@ async function applyChangedGmailThreads(input: {
 }) {
   for (let index = 0; index < input.changedThreadIds.length; index += gmailThreadSyncConcurrency) {
     const threadIds = input.changedThreadIds.slice(index, index + gmailThreadSyncConcurrency);
-    await Promise.all(threadIds.map((threadId) => applyChangedGmailThread(input, threadId)));
+    const threads = await Promise.all(
+      threadIds.map(async (threadId) => ({
+        thread: await input.dependencies.gmailProvider.getThread(input.accessToken, threadId),
+        threadId,
+      })),
+    );
+
+    for (const thread of threads) {
+      await applyChangedGmailThread(input, thread.threadId, thread.thread);
+    }
   }
 }
 
@@ -293,9 +302,8 @@ async function applyChangedGmailThread(
     readonly mailAccountId: string;
   },
   threadId: string,
+  thread: GmailThread | null,
 ) {
-  const thread = await input.dependencies.gmailProvider.getThread(input.accessToken, threadId);
-
   if (!thread) {
     await input.dependencies.repository.markGmailThreadDeleted({
       mailAccountId: input.mailAccountId,
