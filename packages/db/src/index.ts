@@ -12,13 +12,19 @@ export {
   MailSyncScopeType,
 } from "../prisma/generated/enums";
 
-export function createPrismaClient() {
-  if (!env.DATABASE_URL) {
+export function createPrismaClient(options?: {
+  readonly connectionString?: string;
+  readonly max?: number;
+}) {
+  const connectionString = options?.connectionString ?? env.DATABASE_URL;
+
+  if (!connectionString) {
     throw new Error("DATABASE_URL is required to create a Prisma client");
   }
 
   const adapter = new PrismaNeon({
-    connectionString: env.DATABASE_URL,
+    connectionString,
+    ...(options?.max === undefined ? {} : { max: options.max }),
   });
 
   return new PrismaClient({ adapter });
