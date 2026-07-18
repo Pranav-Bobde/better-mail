@@ -1,6 +1,7 @@
 "use client";
 
 import { type GetThreadOutput, type MailboxData } from "@code-main/api/mail/contracts";
+import { formatMailBadgeCount } from "@code-main/api/mail/label-presentation";
 import {
   CopilotChatConfigurationProvider,
   CopilotKitProvider,
@@ -20,7 +21,6 @@ import {
   RefreshCw,
   Search,
   Send,
-  ShoppingCart,
   Sparkles,
   Trash2,
   Users2,
@@ -84,33 +84,13 @@ import { orpc } from "@/shared/utils/orpc";
 type MailboxCounts = MailboxData["counts"];
 
 const fallbackCounts = {
-  archive: 0,
-  drafts: 9,
-  forums: 128,
-  inbox: 128,
-  junk: 23,
-  promotions: 21,
-  sent: 0,
-  shopping: 8,
-  social: 972,
-  trash: 0,
-  unread: mails.filter(isUnreadMail).length,
-  updates: 342,
+  drafts: 0,
+  inboxUnread: 0,
 } satisfies MailboxCounts;
 
 const emptyCounts = {
-  archive: 0,
   drafts: 0,
-  forums: 0,
-  inbox: 0,
-  junk: 0,
-  promotions: 0,
-  sent: 0,
-  shopping: 0,
-  social: 0,
-  trash: 0,
-  unread: 0,
-  updates: 0,
+  inboxUnread: 0,
 } satisfies MailboxCounts;
 
 const copilotFetchBindingKey = "__codeMainCopilotFetchBound";
@@ -200,7 +180,7 @@ function MailWorkspace({
   const visibleMails = getVisibleMails(searchFilteredMails, view);
   const counts = mailboxViewState.counts;
   const primaryLinks = React.useMemo(() => createPrimaryLinks(counts), [counts]);
-  const categoryLinks = React.useMemo(() => createCategoryLinks(counts), [counts]);
+  const categoryLinks = React.useMemo(() => createCategoryLinks(), []);
   const selectedMail = getSelectedMail(activeMails, selected);
   const { isLoading: isThreadLoading, messages: threadMessages } = useThreadMessages(selectedMail);
   const openCompose = React.useCallback(() => {
@@ -1011,22 +991,31 @@ function getSelectedMail(activeMails: readonly MailItem[], selected: string | nu
 
 function createPrimaryLinks(counts: MailboxCounts) {
   return [
-    { title: "Inbox", label: String(counts.inbox), icon: Inbox, variant: "default" },
-    { title: "Drafts", label: String(counts.drafts), icon: File, variant: "ghost" },
-    { title: "Sent", label: String(counts.sent), icon: Send, variant: "ghost" },
-    { title: "Junk", label: String(counts.junk), icon: ArchiveX, variant: "ghost" },
-    { title: "Trash", label: String(counts.trash), icon: Trash2, variant: "ghost" },
-    { title: "Archive", label: String(counts.archive), icon: Archive, variant: "ghost" },
+    {
+      title: "Inbox",
+      label: formatMailBadgeCount(counts.inboxUnread, { cap: 99 }) ?? undefined,
+      icon: Inbox,
+      variant: "default",
+    },
+    {
+      title: "Drafts",
+      label: formatMailBadgeCount(counts.drafts) ?? undefined,
+      icon: File,
+      variant: "ghost",
+    },
+    { title: "Sent", icon: Send, variant: "ghost" },
+    { title: "Junk", icon: ArchiveX, variant: "ghost" },
+    { title: "Trash", icon: Trash2, variant: "ghost" },
+    { title: "Archive", icon: Archive, variant: "ghost" },
   ] satisfies readonly NavLink[];
 }
 
-function createCategoryLinks(counts: MailboxCounts) {
+function createCategoryLinks() {
   return [
-    { title: "Social", label: String(counts.social), icon: Users2, variant: "ghost" },
-    { title: "Updates", label: String(counts.updates), icon: AlertCircle, variant: "ghost" },
-    { title: "Forums", label: String(counts.forums), icon: MessagesSquare, variant: "ghost" },
-    { title: "Shopping", label: String(counts.shopping), icon: ShoppingCart, variant: "ghost" },
-    { title: "Promotions", label: String(counts.promotions), icon: Archive, variant: "ghost" },
+    { title: "Social", icon: Users2, variant: "ghost" },
+    { title: "Updates", icon: AlertCircle, variant: "ghost" },
+    { title: "Forums", icon: MessagesSquare, variant: "ghost" },
+    { title: "Promotions", icon: Archive, variant: "ghost" },
   ] satisfies readonly NavLink[];
 }
 
