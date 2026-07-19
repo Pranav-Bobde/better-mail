@@ -915,12 +915,14 @@ test("stores catalog-missing Gmail special labels like YELLOW_STAR as system", a
   // so the catalog misses it. It must not be stored as a user label (chips would
   // render "yellow_star"); with a catalog in hand a miss is always "system".
   const thread = createRealShapedGmailThread();
-  const starredThread = {
+  const starredThread = gmailThreadResponseSchema.parse({
     ...thread,
     messages: thread.messages.map((message, index) =>
-      index === 0 ? { ...message, labelIds: [...(message.labelIds ?? []), "YELLOW_STAR"] } : message,
+      index === 0
+        ? { ...message, labelIds: [...(message.labelIds ?? []), "YELLOW_STAR"] }
+        : message,
     ),
-  };
+  });
 
   await repository.applyGmailThread({
     labelCatalog: new Map([["IMPORTANT", { name: "IMPORTANT", type: "system" }]]),

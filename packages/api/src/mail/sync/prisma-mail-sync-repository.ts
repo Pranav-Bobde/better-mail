@@ -601,7 +601,8 @@ async function replaceGmailMessageLabels(
     // With an authoritative labels.list catalog in hand, a miss cannot be a user
     // label (user labels always appear in labels.list) — it is a Gmail special
     // label like YELLOW_STAR, which chips must drop, so store it as "system".
-    const labelType = labelCatalogItem?.type ?? (input.labelCatalog ? "system" : getLabelType(labelId));
+    const labelType =
+      labelCatalogItem?.type ?? (input.labelCatalog ? "system" : getLabelType(labelId));
     const label = await tx.mailLabel.upsert({
       create: {
         mailAccountId: input.mailAccountId,
