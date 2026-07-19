@@ -1,3 +1,5 @@
+import { Context, Effect, Layer } from "effect";
+import type { EvlogError } from "evlog";
 import { z } from "zod";
 
 import { mailErrors } from "./errors";
@@ -30,6 +32,89 @@ type GmailListErrorFields = {
   readonly query?: string;
   readonly userId: string;
 };
+
+type GmailClientRequests = {
+  readonly getLabel: (
+    accessToken: string,
+    userId: string,
+    labelId: string,
+  ) => Effect.Effect<Awaited<ReturnType<typeof getGmailLabel>>, EvlogError>;
+  readonly getProfile: (
+    accessToken: string,
+    userId: string,
+  ) => Effect.Effect<Awaited<ReturnType<typeof getGmailProfile>>, EvlogError>;
+  readonly getThread: (
+    accessToken: string,
+    userId: string,
+    threadId: string,
+  ) => Effect.Effect<Awaited<ReturnType<typeof getGmailThread>>, EvlogError>;
+  readonly getThreadIfExists: (
+    accessToken: string,
+    userId: string,
+    threadId: string,
+  ) => Effect.Effect<Awaited<ReturnType<typeof getGmailThreadIfExists>>, EvlogError>;
+  readonly listHistory: (
+    input: Parameters<typeof listGmailHistory>[0],
+  ) => Effect.Effect<Awaited<ReturnType<typeof listGmailHistory>>, EvlogError>;
+  readonly listLabels: (
+    accessToken: string,
+    userId: string,
+  ) => Effect.Effect<Awaited<ReturnType<typeof listGmailLabels>>, EvlogError>;
+  readonly listThreads: (
+    input: GmailListInput,
+  ) => Effect.Effect<Awaited<ReturnType<typeof listGmailThreads>>, EvlogError>;
+  readonly sendMessage: (
+    input: Parameters<typeof sendGmailMessage>[0],
+  ) => Effect.Effect<Awaited<ReturnType<typeof sendGmailMessage>>, EvlogError>;
+  readonly watchMailbox: (
+    input: Parameters<typeof watchGmailMailbox>[0],
+  ) => Effect.Effect<Awaited<ReturnType<typeof watchGmailMailbox>>, EvlogError>;
+};
+
+/**
+ * Effect v4 service wrapping the promise-based Gmail REST helpers below. Every
+ * method keeps its zod response parsing inside `Effect.tryPromise` and carries
+ * the catalog `EvlogError` in the Effect error channel. This is the canonical
+ * shape later mail sub-phases copy: a `Context.Service` class exposing effectful
+ * methods, plus a static `Layer.effect` returning `Service.of({ ... })`.
+ */
+export class GmailClient extends Context.Service<GmailClient, GmailClientRequests>()(
+  "mail/GmailClient",
+) {
+  static readonly layer = Layer.effect(
+    GmailClient,
+    // Leaf service with no injected dependencies, so construction is synchronous.
+    // Services that depend on other services build with `Effect.gen` + `yield*`.
+    Effect.sync(() =>
+      GmailClient.of({
+        getLabel: (accessToken, userId, labelId) =>
+          wrapGmailRequest(() => getGmailLabel(accessToken, userId, labelId)),
+        getProfile: (accessToken, userId) =>
+          wrapGmailRequest(() => getGmailProfile(accessToken, userId)),
+        getThread: (accessToken, userId, threadId) =>
+          wrapGmailRequest(() => getGmailThread(accessToken, userId, threadId)),
+        getThreadIfExists: (accessToken, userId, threadId) =>
+          wrapGmailRequest(() => getGmailThreadIfExists(accessToken, userId, threadId)),
+        listHistory: (input) => wrapGmailRequest(() => listGmailHistory(input)),
+        listLabels: (accessToken, userId) =>
+          wrapGmailRequest(() => listGmailLabels(accessToken, userId)),
+        listThreads: (input) => wrapGmailRequest(() => listGmailThreads(input)),
+        sendMessage: (input) => wrapGmailRequest(() => sendGmailMessage(input)),
+        watchMailbox: (input) => wrapGmailRequest(() => watchGmailMailbox(input)),
+      }),
+    ),
+  );
+}
+
+// Bridge a promise-based Gmail REST helper into the Effect error channel. The
+// helpers already throw catalog EvlogError values, so tryPromise's catch passes
+// that EvlogError through unchanged for handlers to unwrap at the boundary.
+function wrapGmailRequest<A>(request: () => Promise<A>): Effect.Effect<A, EvlogError> {
+  return Effect.tryPromise({
+    catch: (error) => error as EvlogError,
+    try: request,
+  });
+}
 
 export async function getGmailProfile(accessToken: string, userId: string) {
   const response = await fetchGmail(accessToken, `/users/${encodeURIComponent(userId)}/profile`);
