@@ -611,7 +611,8 @@ test("marks unavailable Gmail history threads deleted and continues sync", async
   ]);
 });
 
-test("maps Gmail threads.get 404 to an unavailable sync thread", async () => {
+// Real observed Gmail 404 error envelope (same family for threads.get and history.list).
+async function withGmailNotFoundFetch(run: () => Promise<void>) {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
     new Response(
@@ -626,38 +627,29 @@ test("maps Gmail threads.get 404 to an unavailable sync thread", async () => {
     );
 
   try {
-    const gmailProvider = createRuntimeGmailSyncProvider("projects/demo-project/topics/gmail-demo");
-
-    assert.equal(await gmailProvider.getThread("access-token", "deleted-thread"), null);
+    await run();
   } finally {
     globalThis.fetch = originalFetch;
   }
+}
+
+test("maps Gmail threads.get 404 to an unavailable sync thread", async () => {
+  await withGmailNotFoundFetch(async () => {
+    const gmailProvider = createRuntimeGmailSyncProvider("projects/demo-project/topics/gmail-demo");
+
+    assert.equal(await gmailProvider.getThread("access-token", "deleted-thread"), null);
+  });
 });
 
 test("maps Gmail history 404 to an expired history error", async () => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () =>
-    new Response(
-      JSON.stringify({
-        error: {
-          code: 404,
-          message: "Requested entity was not found.",
-          status: "NOT_FOUND",
-        },
-      }),
-      { status: 404 },
-    );
-
-  try {
+  await withGmailNotFoundFetch(async () => {
     const gmailProvider = createRuntimeGmailSyncProvider("projects/demo-project/topics/gmail-demo");
 
     await assert.rejects(
       () => gmailProvider.listHistory("access-token", "expired-history-id"),
       (error: unknown) => hasMailErrorCode(error, mailErrors.GMAIL_HISTORY_EXPIRED.code),
     );
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  });
 });
 
 test("keeps Gmail history 500 mapped to generic history list failure", async () => {

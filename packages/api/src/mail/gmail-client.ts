@@ -6,7 +6,6 @@ import {
   gmailHistoryListResponseSchema,
   gmailLabelResponseSchema,
   gmailLabelsListResponseSchema,
-  gmailListMessagesResponseSchema,
   gmailListThreadsResponseSchema,
   gmailProfileResponseSchema,
   gmailSendResponseSchema,
@@ -56,30 +55,6 @@ export async function getGmailProfile(accessToken: string, userId: string) {
   }
 
   return parsedProfile.data;
-}
-
-export async function listGmailMessages({
-  accessToken,
-  includeSpamTrash = false,
-  labelIds,
-  maxResults,
-  query,
-  userId,
-}: GmailListInput) {
-  return listGmailResource({
-    accessToken,
-    createFailedError: (cause, internal) =>
-      mailErrors.GMAIL_LIST_MESSAGES_FAILED({ cause, internal }),
-    createInvalidError: (cause, internal) =>
-      mailErrors.GMAIL_LIST_MESSAGES_RESPONSE_INVALID({ cause, internal }),
-    includeSpamTrash,
-    labelIds,
-    maxResults,
-    query,
-    resource: "messages",
-    responseSchema: gmailListMessagesResponseSchema,
-    userId,
-  });
 }
 
 export async function listGmailThreads({

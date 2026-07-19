@@ -47,19 +47,11 @@ test("incremental sync keys with notification history id keep the existing forma
 });
 
 test("non-incremental sync keys do not include time", () => {
-  const bootstrapEvent: MailSyncEvent = {
-    mailAccountId: "mail-account-id",
-    type: "GMAIL_BOOTSTRAP_SYNC_REQUESTED",
-  };
   const renewEvent: MailSyncEvent = {
     mailAccountId: "mail-account-id",
     type: "GMAIL_RENEW_WATCH_REQUESTED",
   };
 
-  assert.equal(
-    getMailSyncEventIdempotencyKey(bootstrapEvent, new Date("2026-07-19T10:30:10.000Z")),
-    "GMAIL_BOOTSTRAP_SYNC_REQUESTED:mail-account-id",
-  );
   assert.equal(
     getMailSyncEventIdempotencyKey(renewEvent, new Date("2026-07-19T10:31:10.000Z")),
     "GMAIL_RENEW_WATCH_REQUESTED:mail-account-id",

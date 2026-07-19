@@ -62,7 +62,11 @@ export async function getMailboxData(
 ) {
   const credentials = await getGmailCredentials(authContext, [gmailReadonlyScope]);
   // Best-effort counts never reject, so the fetch can safely overlap the cache read.
-  const countsPromise = getMailboxCountsBestEffort(credentials.accessToken, gmailUserId, authContext);
+  const countsPromise = getMailboxCountsBestEffort(
+    credentials.accessToken,
+    gmailUserId,
+    authContext,
+  );
   const cachedMailboxData = await getCachedMailboxData(input, authContext);
 
   if (cachedMailboxData) {
