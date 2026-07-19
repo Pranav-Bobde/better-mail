@@ -1,16 +1,13 @@
 import { auth } from "@code-main/auth";
-import { mailSyncEventSchema } from "@code-main/api/mail/sync/contracts";
+import { mailSyncEventSchema, type MailSyncEvent } from "@code-main/api/mail/sync/contracts";
 import { createGmailSyncProvider } from "@code-main/api/mail/sync/gmail-sync-provider";
 import {
   createMailSyncWorkerFields,
   type MailSyncWideEventFields,
 } from "@code-main/api/mail/sync/observability";
 import { createPrismaMailSyncRepository } from "@code-main/api/mail/sync/prisma-mail-sync-repository";
-import {
-  MailSyncLockBusyError,
-  processMailSyncEvent,
-  SYNC_LEASE_SECONDS,
-} from "@code-main/api/mail/sync/processor";
+import { MailSyncLockBusyError, SYNC_LEASE_SECONDS } from "@code-main/api/mail/sync/processor";
+import { runMailSyncEvent } from "@code-main/api/runtime";
 import { handleCallback } from "@vercel/queue";
 
 import { log, withEvlog } from "@/shared/lib/evlog";
@@ -38,13 +35,16 @@ const handleMailSyncQueueCallback = handleCallback(
     }
 
     try {
-      const result = await processMailSyncEvent(event, {
+      // The processor is an Effect service: runMailSyncEvent runs it through the
+      // singleton runtime (which supplies the MailSyncRepository dependency) and
+      // re-throws the raw error, so the retry branch below still sees a real
+      // MailSyncLockBusyError.
+      const result = await runMailSyncEvent(event, {
         gmailProvider: createGmailSyncProvider(),
         lockOwnerId: metadata.messageId,
         log,
         now: new Date(),
         realtimeNotifier: ablyMailRealtimeNotifier,
-        repository: createPrismaMailSyncRepository(),
         tokenProvider: {
           getGoogleAccessToken: async (input) => {
             const token = await auth.api.getAccessToken({
@@ -134,9 +134,7 @@ const handleMailSyncQueueCallback = handleCallback(
   },
 );
 
-async function markMailAccountNeedsResyncForDroppedEvent(
-  event: Parameters<typeof processMailSyncEvent>[0],
-) {
+async function markMailAccountNeedsResyncForDroppedEvent(event: MailSyncEvent) {
   try {
     // RESYNC_NEEDED misses the ACTIVE-only cache, so the next default mailbox load
     // bootstraps live Gmail data and resets the account back to ACTIVE.

@@ -111,7 +111,12 @@ export type MailSyncProcessorDependencies = {
   readonly tokenProvider: MailSyncTokenProvider;
 };
 
-type MailSyncProcessorRequestDependencies = Omit<MailSyncProcessorDependencies, "repository">;
+export type MailSyncProcessorRequestDependencies = Omit<
+  MailSyncProcessorDependencies,
+  "repository"
+>;
+
+export type MailSyncProcessorResult = Awaited<ReturnType<typeof processMailSyncEvent>>;
 
 type MailSyncProcessorRequests = {
   readonly processMailSyncEvent: (

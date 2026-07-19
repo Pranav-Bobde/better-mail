@@ -1,8 +1,13 @@
-import { Layer, ManagedRuntime } from "effect";
+import { Cause, Effect, Exit, Layer, ManagedRuntime } from "effect";
 
 import { GmailClient } from "./mail/gmail-client";
 import { MailboxService } from "./mail/mailbox-service";
-import { MailSyncProcessor } from "./mail/sync/processor";
+import type { MailSyncEvent } from "./mail/sync/contracts";
+import {
+  MailSyncProcessor,
+  type MailSyncProcessorRequestDependencies,
+  type MailSyncProcessorResult,
+} from "./mail/sync/processor";
 import { MailSyncRepository } from "./mail/sync/prisma-mail-sync-repository";
 
 // Effect v4 canonical idioms for this repo (pinned via Phase-0 spike against 4.0.0-beta.99):
@@ -19,3 +24,39 @@ export const AppLayer = Layer.mergeAll(MailboxService.layer, MailSyncProcessor.l
 );
 
 export const runtime = ManagedRuntime.make(AppLayer);
+
+type RuntimeServices = ManagedRuntime.ManagedRuntime.Services<typeof runtime>;
+
+/**
+ * Runs a boundary effect against the singleton runtime and re-throws the raw
+ * catalog error on failure. runtime.runPromise would reject with a wrapping
+ * FiberFailure; squashing the Exit's cause restores the underlying EvlogError /
+ * MailSyncLockBusyError so handler catch blocks (envelope conversion, queue
+ * lock-busy retry) keep seeing the same value the promise helpers threw.
+ */
+export async function runRequest<A, E>(effect: Effect.Effect<A, E, RuntimeServices>): Promise<A> {
+  const exit = await runtime.runPromiseExit(effect);
+
+  if (Exit.isSuccess(exit)) {
+    return exit.value;
+  }
+
+  throw Cause.squash(exit.cause);
+}
+
+/**
+ * Boundary entrypoint for the Vercel queue worker: it cannot import `effect`,
+ * so the processor effect is assembled here and run through the runtime, which
+ * supplies the MailSyncRepository dependency. The by-design MailSyncLockBusyError
+ * travels the error channel and is re-thrown raw for the worker's retry branch.
+ */
+export function runMailSyncEvent(
+  event: MailSyncEvent,
+  dependencies: MailSyncProcessorRequestDependencies,
+): Promise<MailSyncProcessorResult> {
+  return runRequest(
+    Effect.flatMap(MailSyncProcessor, (processor) =>
+      processor.processMailSyncEvent(event, dependencies),
+    ),
+  );
+}

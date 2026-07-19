@@ -1,16 +1,21 @@
-import type { Context } from "../../../context";
-import { createRpcSuccessFields } from "../../../observability/rpc/fields";
-import { mailErrors } from "../../../mail/errors";
-import { getMailboxData, logMailboxError } from "../../../mail/mailbox-service";
-import type { getMailboxInputSchema } from "./constants";
+import { Effect } from "effect";
 import type { z } from "zod";
+
+import type { Context } from "../../../context";
+import { mailErrors } from "../../../mail/errors";
+import { MailboxService, logMailboxError } from "../../../mail/mailbox-service";
+import { createRpcSuccessFields } from "../../../observability/rpc/fields";
+import { runRequest } from "../../../runtime";
+import type { getMailboxInputSchema } from "./constants";
 
 export async function runGetMailbox(
   input: z.infer<typeof getMailboxInputSchema>,
   context: Context,
 ) {
   try {
-    const result = await getMailboxData(input, context);
+    const result = await runRequest(
+      Effect.flatMap(MailboxService, (service) => service.getMailboxData(input, context)),
+    );
 
     context.log.set(createRpcSuccessFields("mail.getMailbox"));
     return result;
