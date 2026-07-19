@@ -6,10 +6,16 @@ import {
   type MailSyncWideEventFields,
 } from "@code-main/api/mail/sync/observability";
 import { createPrismaMailSyncRepository } from "@code-main/api/mail/sync/prisma-mail-sync-repository";
-import { MailSyncLockBusyError, processMailSyncEvent } from "@code-main/api/mail/sync/processor";
+import {
+  MailSyncLockBusyError,
+  processMailSyncEvent,
+  SYNC_LEASE_SECONDS,
+} from "@code-main/api/mail/sync/processor";
 import { handleCallback } from "@vercel/queue";
 
 import { log, withEvlog } from "@/shared/lib/evlog";
+import { vercelMailSyncBroker } from "@/shared/lib/mail-sync-queue";
+import { ablyMailRealtimeNotifier } from "@/shared/lib/mail-realtime-runtime";
 
 const maxDeliveryCount = 10;
 const lockBusyRetrySeconds = 30;
@@ -18,11 +24,26 @@ const handleMailSyncQueueCallback = handleCallback(
   async (rawEvent, metadata) => {
     const event = mailSyncEventSchema.parse(rawEvent);
 
+    if (metadata.deliveryCount > maxDeliveryCount) {
+      await markMailAccountNeedsResyncForDroppedEvent(event);
+      logMailSyncWorkerFields(
+        createMailSyncWorkerFields({
+          errorName: "MaxDeliveryCountExceeded",
+          metadata,
+          outcome: "dropped",
+        }),
+      );
+
+      return;
+    }
+
     try {
-      await processMailSyncEvent(event, {
+      const result = await processMailSyncEvent(event, {
         gmailProvider: createGmailSyncProvider(),
         lockOwnerId: metadata.messageId,
+        log,
         now: new Date(),
+        realtimeNotifier: ablyMailRealtimeNotifier,
         repository: createPrismaMailSyncRepository(),
         tokenProvider: {
           getGoogleAccessToken: async (input) => {
@@ -41,6 +62,10 @@ const handleMailSyncQueueCallback = handleCallback(
           },
         },
       });
+
+      if (result?.continuationEvent) {
+        await vercelMailSyncBroker.enqueueMailSyncEvent(result.continuationEvent);
+      }
     } catch (error) {
       logMailSyncWorkerFields(
         createMailSyncWorkerFields({
@@ -105,9 +130,31 @@ const handleMailSyncQueueCallback = handleCallback(
 
       return { afterSeconds: retryAfterSeconds };
     },
-    visibilityTimeoutSeconds: 300,
+    visibilityTimeoutSeconds: SYNC_LEASE_SECONDS,
   },
 );
+
+async function markMailAccountNeedsResyncForDroppedEvent(
+  event: Parameters<typeof processMailSyncEvent>[0],
+) {
+  try {
+    // RESYNC_NEEDED misses the ACTIVE-only cache, so the next default mailbox load
+    // bootstraps live Gmail data and resets the account back to ACTIVE.
+    await createPrismaMailSyncRepository().markMailAccountNeedsResync(event.mailAccountId);
+  } catch (error) {
+    log.info({
+      errorCode: getErrorCode(error),
+      errorName: getErrorName(error),
+      mailSync: {
+        eventType: event.type,
+        mailAccountId: event.mailAccountId,
+      },
+      module: "mail",
+      operation: "mail.sync.queue.drop.resync_mark",
+      outcome: "failed",
+    });
+  }
+}
 
 function logMailSyncWorkerFields(fields: MailSyncWideEventFields) {
   log.info({ ...fields });

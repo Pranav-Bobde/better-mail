@@ -8,7 +8,6 @@ import {
   getGmailProfile,
   getGmailThread,
   listGmailLabels,
-  listGmailMessages,
   listGmailThreads,
   sendGmailMessage,
 } from "./gmail-client";
@@ -21,43 +20,12 @@ import {
   parseGmailEmailAddress,
 } from "./gmail-message-utils";
 import type { GmailLabel, GmailMessage, GmailThread } from "./gmail-schemas";
+import { getDisplayLabels } from "./label-presentation";
 
 const mailboxMaxResults = 20;
 const gmailUserId = "me";
 const gmailReadonlyScope = "https://www.googleapis.com/auth/gmail.readonly";
 const gmailSendScope = "https://www.googleapis.com/auth/gmail.send";
-
-const systemLabelCountIds = {
-  drafts: "DRAFT",
-  forums: "CATEGORY_FORUMS",
-  inbox: "INBOX",
-  junk: "SPAM",
-  promotions: "CATEGORY_PROMOTIONS",
-  sent: "SENT",
-  social: "CATEGORY_SOCIAL",
-  trash: "TRASH",
-  unread: "UNREAD",
-  updates: "CATEGORY_UPDATES",
-} as const;
-
-const ignoredDisplayLabelIds = new Set([
-  "CATEGORY_FORUMS",
-  "CATEGORY_PERSONAL",
-  "CATEGORY_PROMOTIONS",
-  "CATEGORY_SOCIAL",
-  "CATEGORY_UPDATES",
-  "DRAFT",
-  "INBOX",
-  "SENT",
-  "SPAM",
-  "TRASH",
-  "UNREAD",
-]);
-
-const systemDisplayLabels = {
-  IMPORTANT: "important",
-  STARRED: "starred",
-} as const;
 
 type MailboxErrorOperation = "getMailbox" | "getThread" | "send";
 
@@ -93,6 +61,12 @@ export async function getMailboxData(
   authContext: AuthContext,
 ) {
   const credentials = await getGmailCredentials(authContext, [gmailReadonlyScope]);
+  // Best-effort counts never reject, so the fetch can safely overlap the cache read.
+  const countsPromise = getMailboxCountsBestEffort(
+    credentials.accessToken,
+    gmailUserId,
+    authContext,
+  );
   const cachedMailboxData = await getCachedMailboxData(input, authContext);
 
   if (cachedMailboxData) {
@@ -102,12 +76,19 @@ export async function getMailboxData(
     });
 
     return {
-      data: cachedMailboxData.data,
+      data: {
+        ...cachedMailboxData.data,
+        counts: await countsPromise,
+      },
       status: "ok" as const,
     };
   }
 
-  const mailboxBaseData = await getMailboxBaseData(input, credentials.accessToken);
+  const mailboxBaseData = await getMailboxBaseData(
+    input,
+    credentials.accessToken,
+    await countsPromise,
+  );
   const threadDetails = await getMailboxThreadDetails(
     credentials.accessToken,
     gmailUserId,
@@ -150,8 +131,9 @@ async function getCachedMailboxData(
 async function getMailboxBaseData(
   input: { readonly query: string; readonly view: "all" | "unread" },
   accessToken: string,
+  counts: MailboxData["counts"],
 ) {
-  const [profile, gmailLabels, listResponse, counts] = await Promise.all([
+  const [profile, gmailLabels, listResponse] = await Promise.all([
     getGmailProfile(accessToken, gmailUserId),
     listGmailLabels(accessToken, gmailUserId),
     listGmailThreads({
@@ -161,7 +143,6 @@ async function getMailboxBaseData(
       query: getMailboxQuery(input),
       userId: gmailUserId,
     }),
-    getMailboxCounts(accessToken, gmailUserId),
   ]);
 
   return {
@@ -220,9 +201,12 @@ async function cacheMailboxDataIfAvailable(
     return;
   }
 
+  const labelCatalog = createLabelCatalog(mailboxBaseData.gmailLabels);
+
   await Promise.all(
     threadDetails.map((thread) =>
       syncCacheContext.repository.applyGmailThread({
+        labelCatalog,
         latestMessageId: getLatestThreadMessage(thread.messages).id,
         mailAccountId: mailAccount.id,
         thread,
@@ -266,7 +250,18 @@ async function enqueueMailboxSyncIfAvailable(
 ) {
   try {
     await authContext.mailSyncBroker?.enqueueMailSyncEvent(event);
-  } catch {
+  } catch (error) {
+    // Fire-and-forget nudge: a failed enqueue must never fail the mailbox load,
+    // but it is a real queue failure, not a Gmail error — log it as itself.
+    authContext.log?.set({
+      mailSyncEnqueue: {
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        eventType: event.type,
+        mailAccountId: event.mailAccountId,
+        outcome: "failed",
+      },
+    });
     return;
   }
 }
@@ -386,71 +381,32 @@ async function requireGoogleAccessToken(authContext: AuthContext) {
   return token;
 }
 
-function getMailboxCounts(accessToken: string, userId: string) {
-  return Promise.all([
-    getSystemLabelCounts(accessToken, userId),
-    getArchiveLabelCount(accessToken, userId),
-    getPromotionsLabelCount(accessToken, userId),
-  ]).then(([systemCounts, archive, shopping]) => ({
-    ...systemCounts,
-    archive,
-    shopping,
-  }));
-}
-
-async function getSystemLabelCounts(accessToken: string, userId: string) {
-  const labels = await Promise.all(
-    Object.entries(systemLabelCountIds).map(async ([key, labelId]) => ({
-      key,
-      label: await getGmailLabel(accessToken, userId, labelId),
-    })),
-  );
-
-  return labels.reduce(
-    (counts, item) => ({
-      ...counts,
-      [item.key]: getMessageTotal(item.label),
-    }),
-    {
+async function getMailboxCountsBestEffort(
+  accessToken: string,
+  userId: string,
+  authContext: AuthContext,
+) {
+  try {
+    return await getMailboxCounts(accessToken, userId);
+  } catch (error) {
+    logMailboxError(authContext.log, error, "getMailbox");
+    return {
       drafts: 0,
-      forums: 0,
-      inbox: 0,
-      junk: 0,
-      promotions: 0,
-      sent: 0,
-      social: 0,
-      trash: 0,
-      unread: 0,
-      updates: 0,
-    },
-  );
+      inboxUnread: 0,
+    };
+  }
 }
 
-function getArchiveLabelCount(accessToken: string, userId: string) {
-  return getMessageCountByQuery(
-    accessToken,
-    userId,
-    "-in:inbox -in:sent -in:drafts -in:trash -in:spam",
-  );
-}
+async function getMailboxCounts(accessToken: string, userId: string) {
+  const [inboxLabel, draftLabel] = await Promise.all([
+    getGmailLabel(accessToken, userId, "INBOX"),
+    getGmailLabel(accessToken, userId, "DRAFT"),
+  ]);
 
-function getPromotionsLabelCount(accessToken: string, userId: string) {
-  return getMessageCountByQuery(
-    accessToken,
-    userId,
-    "category:promotions (receipt OR order OR purchase)",
-  );
-}
-
-async function getMessageCountByQuery(accessToken: string, userId: string, query: string) {
-  const response = await listGmailMessages({
-    accessToken,
-    maxResults: 1,
-    query,
-    userId,
-  });
-
-  return response.resultSizeEstimate ?? 0;
+  return {
+    drafts: draftLabel.messagesTotal ?? 0,
+    inboxUnread: inboxLabel.messagesUnread ?? 0,
+  };
 }
 
 export function toMailMessage(message: GmailMessage, labelById: ReadonlyMap<string, GmailLabel>) {
@@ -463,7 +419,7 @@ export function toMailMessage(message: GmailMessage, labelById: ReadonlyMap<stri
     email: from.email,
     html: getGmailMessageDisplayHtml(message),
     id: message.id,
-    labels: getDisplayLabels(labelIds, labelById),
+    labels: getLabelDisplayLabels(labelIds, labelById),
     name: from.name,
     read: !labelIds.includes("UNREAD"),
     snippet: message.snippet,
@@ -491,7 +447,7 @@ function getThreadDisplayLabels(
   messages: GmailThread["messages"],
   labelById: ReadonlyMap<string, GmailLabel>,
 ) {
-  return getDisplayLabels(
+  return getLabelDisplayLabels(
     messages.flatMap((message) => message.labelIds ?? []),
     labelById,
   );
@@ -522,26 +478,11 @@ function getMailboxQuery(input: { readonly query: string; readonly view: "all" |
   return parts.filter((part) => part.length > 0).join(" ") || undefined;
 }
 
-function getDisplayLabels(labelIds: readonly string[], labelById: ReadonlyMap<string, GmailLabel>) {
-  return labelIds
-    .flatMap((labelId) => getDisplayLabel(labelId, labelById))
-    .filter((label, index, labels) => labels.indexOf(label) === index)
-    .slice(0, 3);
-}
-
-function getDisplayLabel(labelId: string, labelById: ReadonlyMap<string, GmailLabel>) {
-  if (ignoredDisplayLabelIds.has(labelId)) {
-    return [];
-  }
-
-  const displayLabel = getSystemDisplayLabel(labelId) ?? getUserDisplayLabel(labelId, labelById);
-
-  return displayLabel ? [displayLabel] : [];
-}
-
-function getUserDisplayLabel(labelId: string, labelById: ReadonlyMap<string, GmailLabel>) {
-  const userLabel = labelById.get(labelId);
-  return userLabel?.type === "user" ? userLabel.name.toLowerCase() : null;
+function getLabelDisplayLabels(
+  labelIds: readonly string[],
+  labelById: ReadonlyMap<string, GmailLabel>,
+) {
+  return getDisplayLabels(labelIds.map((labelId) => toLabelLike(labelId, labelById)));
 }
 
 function createRawMimeMessage(input: {
@@ -564,23 +505,22 @@ function createRawMimeMessage(input: {
   return Buffer.from(`${headers.join("\r\n")}\r\n\r\n${input.body}`).toString("base64url");
 }
 
-function getMessageTotal(label: GmailLabel) {
-  return label.messagesTotal ?? 0;
-}
-
-function getSystemDisplayLabel(labelId: string) {
-  switch (labelId) {
-    case "IMPORTANT":
-      return systemDisplayLabels.IMPORTANT;
-    case "STARRED":
-      return systemDisplayLabels.STARRED;
-    default:
-      return null;
-  }
-}
-
 function getMailboxLabel(email: string) {
   return email.split("@")[0] ?? email;
+}
+
+function toLabelLike(labelId: string, labelById: ReadonlyMap<string, GmailLabel>) {
+  const label = labelById.get(labelId);
+
+  return {
+    id: labelId,
+    name: label?.name ?? labelId,
+    type: label?.type ?? "system",
+  };
+}
+
+function createLabelCatalog(labels: readonly GmailLabel[]) {
+  return new Map(labels.map((label) => [label.id, { name: label.name, type: label.type }]));
 }
 
 function getMailboxEvlogError(error: unknown, operation: MailboxErrorOperation) {

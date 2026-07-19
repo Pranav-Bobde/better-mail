@@ -4,6 +4,7 @@ import test from "node:test";
 import { serverEnvSchema } from "./server-schema";
 
 const requiredEnv = {
+  ABLY_API_KEY: "2COlaA.test-key:test-secret",
   APP_URL: "http://localhost:4000",
   BETTER_AUTH_SECRET: "test-secret-with-at-least-32-chars",
   BETTER_AUTH_URL: "http://localhost:4000",
@@ -20,6 +21,16 @@ const requiredEnv = {
   COPILOTKIT_TELEMETRY_DISABLED: "true",
   NODE_ENV: "test",
 } as const;
+
+test("server env contract requires the Ably API key", () => {
+  const result = serverEnvSchema.safeParse({
+    ...requiredEnv,
+    ABLY_API_KEY: "",
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.error?.issues[0]?.path.join("."), "ABLY_API_KEY");
+});
 
 test("server env contract requires AI runtime values", () => {
   assert.deepEqual(serverEnvSchema.parse(requiredEnv), requiredEnv);

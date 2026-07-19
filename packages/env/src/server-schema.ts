@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const serverEnvSchema = z.object({
+  ABLY_API_KEY: z.string().min(1),
   APP_URL: z.url(),
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.url(),

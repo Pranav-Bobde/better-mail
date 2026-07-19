@@ -35,19 +35,9 @@ const mailMessageSchema = z.object({
   threadId: z.string(),
 });
 
-const mailboxCountsSchema = z.object({
-  archive: z.number(),
+export const mailboxCountsSchema = z.object({
   drafts: z.number(),
-  forums: z.number(),
-  inbox: z.number(),
-  junk: z.number(),
-  promotions: z.number(),
-  sent: z.number(),
-  shopping: z.number(),
-  social: z.number(),
-  trash: z.number(),
-  unread: z.number(),
-  updates: z.number(),
+  inboxUnread: z.number(),
 });
 
 const mailboxDataSchema = z.object({

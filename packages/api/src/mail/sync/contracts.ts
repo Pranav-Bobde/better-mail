@@ -155,10 +155,6 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 export const mailSyncEventSchema = z.discriminatedUnion("type", [
   z.strictObject({
     mailAccountId: z.string().min(1),
-    type: z.literal("GMAIL_BOOTSTRAP_SYNC_REQUESTED"),
-  }),
-  z.strictObject({
-    mailAccountId: z.string().min(1),
     notificationHistoryId: z.string().min(1).optional(),
     type: z.literal("GMAIL_INCREMENTAL_SYNC_REQUESTED"),
   }),

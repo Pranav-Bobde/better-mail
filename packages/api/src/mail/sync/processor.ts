@@ -1,7 +1,11 @@
 import type { GmailThread } from "../gmail-schemas";
+import type { MailRealtimeNotifier } from "../realtime/contracts";
+import { mailErrors } from "../errors";
 import { mailSyncEventSchema, type MailSyncEvent } from "./contracts";
 
-const lockTtlMs = 5 * 60 * 1000;
+export const SYNC_LEASE_SECONDS = 300;
+export const SYNC_LOCK_TTL_MS = SYNC_LEASE_SECONDS * 1000;
+const gmailThreadSyncConcurrency = 5;
 
 export class MailSyncLockBusyError extends Error {
   constructor(syncCursorId: string) {
@@ -17,6 +21,7 @@ export type MailSyncRepository = {
     readonly syncCursorId: string;
   }) => Promise<{ readonly acquired: boolean }>;
   readonly applyGmailThread: (input: {
+    readonly labelCatalog?: ReadonlyMap<string, { readonly name: string; readonly type: string }>;
     readonly latestMessageId: string;
     readonly mailAccountId: string;
     readonly thread: GmailThread;
@@ -33,6 +38,11 @@ export type MailSyncRepository = {
     };
     readonly userId: string;
   } | null>;
+  readonly markGmailThreadDeleted: (input: {
+    readonly mailAccountId: string;
+    readonly threadId: string;
+  }) => Promise<void>;
+  readonly markMailAccountNeedsResync: (mailAccountId: string) => Promise<void>;
   readonly releaseSyncLock: (input: {
     readonly lockOwnerId: string;
     readonly syncCursorId: string;
@@ -42,20 +52,23 @@ export type MailSyncRepository = {
     readonly syncCursorId: string;
   }) => Promise<void>;
   readonly updateGmailWatch: (input: {
-    readonly cursorValue: string;
     readonly mailAccountId: string;
     readonly watchExpiresAt: Date;
   }) => Promise<void>;
 };
 
 export type GmailSyncProvider = {
-  readonly getThread: (accessToken: string, threadId: string) => Promise<GmailThread>;
+  readonly getThread: (accessToken: string, threadId: string) => Promise<GmailThread | null>;
+  readonly listLabels: (
+    accessToken: string,
+  ) => Promise<readonly { readonly id: string; readonly name: string; readonly type: string }[]>;
   readonly listHistory: (
     accessToken: string,
     startHistoryId: string,
   ) => Promise<{
     readonly history?: readonly GmailHistoryRecord[];
     readonly historyId?: string;
+    readonly nextPageToken?: string;
   }>;
   readonly watchMailbox: (accessToken: string) => Promise<{
     readonly expiration: string;
@@ -76,7 +89,20 @@ export type MailSyncTokenProvider = {
 export type MailSyncProcessorDependencies = {
   readonly gmailProvider: GmailSyncProvider;
   readonly lockOwnerId: string;
+  readonly log?: {
+    readonly info: (fields: {
+      readonly mailSync: {
+        readonly errorCode: string;
+        readonly eventType: MailSyncEvent["type"];
+        readonly mailAccountId: string;
+      };
+      readonly module: "mail";
+      readonly operation: "mail.sync.history.expired";
+      readonly outcome: "resync_needed";
+    }) => void;
+  };
   readonly now: Date;
+  readonly realtimeNotifier: MailRealtimeNotifier;
   readonly repository: MailSyncRepository;
   readonly tokenProvider: MailSyncTokenProvider;
 };
@@ -107,10 +133,7 @@ export async function processMailSyncEvent(
 
   switch (event.type) {
     case "GMAIL_INCREMENTAL_SYNC_REQUESTED":
-      await processGmailIncrementalSync(event, dependencies);
-      return;
-    case "GMAIL_BOOTSTRAP_SYNC_REQUESTED":
-      return;
+      return processGmailIncrementalSync(event, dependencies);
     case "GMAIL_RENEW_WATCH_REQUESTED":
       await processGmailWatchRenewal(event, dependencies);
       return;
@@ -138,7 +161,6 @@ async function processGmailWatchRenewal(
   const watchResponse = await dependencies.gmailProvider.watchMailbox(token.accessToken);
 
   await dependencies.repository.updateGmailWatch({
-    cursorValue: watchResponse.historyId,
     mailAccountId: mailAccount.id,
     watchExpiresAt: new Date(Number(watchResponse.expiration)),
   });
@@ -157,7 +179,7 @@ async function processGmailIncrementalSync(
   }
 
   const lock = await dependencies.repository.acquireSyncLock({
-    lockedUntil: new Date(dependencies.now.getTime() + lockTtlMs),
+    lockedUntil: new Date(dependencies.now.getTime() + SYNC_LOCK_TTL_MS),
     lockOwnerId: dependencies.lockOwnerId,
     syncCursorId: mailAccount.syncCursor.id,
   });
@@ -167,7 +189,24 @@ async function processGmailIncrementalSync(
   }
 
   try {
-    await syncGmailHistory(mailAccount, dependencies);
+    return await syncGmailHistory(mailAccount, dependencies);
+  } catch (error) {
+    if (getErrorCode(error) !== mailErrors.GMAIL_HISTORY_EXPIRED.code) {
+      throw error;
+    }
+
+    await dependencies.repository.markMailAccountNeedsResync(mailAccount.id);
+    dependencies.log?.info({
+      mailSync: {
+        errorCode: mailErrors.GMAIL_HISTORY_EXPIRED.code,
+        eventType: event.type,
+        mailAccountId: mailAccount.id,
+      },
+      module: "mail",
+      operation: "mail.sync.history.expired",
+      outcome: "resync_needed",
+    });
+    return;
   } finally {
     await dependencies.repository.releaseSyncLock({
       lockOwnerId: dependencies.lockOwnerId,
@@ -190,37 +229,137 @@ async function syncGmailHistory(
     token.accessToken,
     mailAccount.syncCursor.cursorValue,
   );
+  const history = historyResponse.history ?? [];
+  const changedThreadIds = getChangedThreadIds(history);
+  const labelCatalog =
+    changedThreadIds.length > 0
+      ? createLabelCatalog(await dependencies.gmailProvider.listLabels(token.accessToken))
+      : undefined;
 
   await applyChangedGmailThreads({
     accessToken: token.accessToken,
-    changedThreadIds: getChangedThreadIds(historyResponse.history ?? []),
+    changedThreadIds,
     dependencies,
+    labelCatalog,
     mailAccountId: mailAccount.id,
   });
 
-  if (historyResponse.historyId) {
-    await dependencies.repository.updateSyncCursor({
-      cursorValue: historyResponse.historyId,
-      syncCursorId: mailAccount.syncCursor.id,
-    });
+  const checkpoint = getGmailHistoryCheckpoint(historyResponse, history);
+  await saveGmailHistoryCheckpoint({
+    changedThreadCount: changedThreadIds.length,
+    checkpoint,
+    dependencies,
+    mailAccount,
+  });
+
+  return createGmailSyncContinuation(mailAccount.id, checkpoint, historyResponse.nextPageToken);
+}
+
+async function saveGmailHistoryCheckpoint(input: {
+  readonly changedThreadCount: number;
+  readonly checkpoint: string | undefined;
+  readonly dependencies: MailSyncProcessorDependencies;
+  readonly mailAccount: NonNullable<
+    Awaited<ReturnType<MailSyncRepository["getActiveMailAccountWithCursor"]>>
+  >;
+}) {
+  if (!input.checkpoint) {
+    return;
   }
+
+  await input.dependencies.repository.updateSyncCursor({
+    cursorValue: input.checkpoint,
+    syncCursorId: input.mailAccount.syncCursor.id,
+  });
+
+  if (input.changedThreadCount === 0) {
+    return;
+  }
+
+  await input.dependencies.realtimeNotifier.publishMailboxChanged({
+    mailAccountId: input.mailAccount.id,
+    mailboxVersion: input.checkpoint,
+    type: "mailboxChanged",
+    userId: input.mailAccount.userId,
+  });
+}
+
+function getGmailHistoryCheckpoint(
+  response: Awaited<ReturnType<GmailSyncProvider["listHistory"]>>,
+  history: readonly GmailHistoryRecord[],
+) {
+  if (!response.nextPageToken) {
+    return response.historyId;
+  }
+
+  return history.findLast((record) => record.id)?.id;
+}
+
+function createGmailSyncContinuation(
+  mailAccountId: string,
+  checkpoint: string | undefined,
+  nextPageToken: string | undefined,
+) {
+  if (!checkpoint || !nextPageToken) {
+    return undefined;
+  }
+
+  return {
+    continuationEvent: {
+      mailAccountId,
+      notificationHistoryId: checkpoint,
+      type: "GMAIL_INCREMENTAL_SYNC_REQUESTED" as const,
+    },
+  };
 }
 
 async function applyChangedGmailThreads(input: {
   readonly accessToken: string;
   readonly changedThreadIds: readonly string[];
   readonly dependencies: MailSyncProcessorDependencies;
+  readonly labelCatalog?: ReadonlyMap<string, { readonly name: string; readonly type: string }>;
   readonly mailAccountId: string;
 }) {
-  for (const threadId of input.changedThreadIds) {
-    const thread = await input.dependencies.gmailProvider.getThread(input.accessToken, threadId);
-    await input.dependencies.repository.applyGmailThread({
-      latestMessageId: getLatestGmailThreadMessageId(thread),
-      mailAccountId: input.mailAccountId,
-      thread,
-      threadId: thread.id,
-    });
+  for (let index = 0; index < input.changedThreadIds.length; index += gmailThreadSyncConcurrency) {
+    const threadIds = input.changedThreadIds.slice(index, index + gmailThreadSyncConcurrency);
+    const threads = await Promise.all(
+      threadIds.map(async (threadId) => ({
+        thread: await input.dependencies.gmailProvider.getThread(input.accessToken, threadId),
+        threadId,
+      })),
+    );
+
+    for (const thread of threads) {
+      await applyChangedGmailThread(input, thread.threadId, thread.thread);
+    }
   }
+}
+
+async function applyChangedGmailThread(
+  input: {
+    readonly accessToken: string;
+    readonly dependencies: MailSyncProcessorDependencies;
+    readonly labelCatalog?: ReadonlyMap<string, { readonly name: string; readonly type: string }>;
+    readonly mailAccountId: string;
+  },
+  threadId: string,
+  thread: GmailThread | null,
+) {
+  if (!thread) {
+    await input.dependencies.repository.markGmailThreadDeleted({
+      mailAccountId: input.mailAccountId,
+      threadId,
+    });
+    return;
+  }
+
+  await input.dependencies.repository.applyGmailThread({
+    labelCatalog: input.labelCatalog,
+    latestMessageId: getLatestGmailThreadMessageId(thread),
+    mailAccountId: input.mailAccountId,
+    thread,
+    threadId: thread.id,
+  });
 }
 
 function getChangedThreadIds(history: readonly GmailHistoryRecord[]) {
@@ -272,6 +411,18 @@ function toReadonlyArray<T>(value: readonly T[] | undefined) {
   return value ?? [];
 }
 
+function createLabelCatalog(
+  labels: readonly { readonly id: string; readonly name: string; readonly type: string }[],
+) {
+  return new Map(labels.map((label) => [label.id, { name: label.name, type: label.type }]));
+}
+
 function getLatestGmailThreadMessageId(thread: GmailThread) {
   return thread.messages[thread.messages.length - 1]?.id ?? thread.messages[0].id;
+}
+
+function getErrorCode(error: unknown) {
+  const code = (Object(error) as { readonly code?: unknown }).code;
+
+  return typeof code === "string" ? code : undefined;
 }

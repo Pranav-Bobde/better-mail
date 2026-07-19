@@ -6,7 +6,6 @@ import {
   gmailHistoryListResponseSchema,
   gmailLabelResponseSchema,
   gmailLabelsListResponseSchema,
-  gmailListMessagesResponseSchema,
   gmailListThreadsResponseSchema,
   gmailProfileResponseSchema,
   gmailSendResponseSchema,
@@ -58,30 +57,6 @@ export async function getGmailProfile(accessToken: string, userId: string) {
   return parsedProfile.data;
 }
 
-export async function listGmailMessages({
-  accessToken,
-  includeSpamTrash = false,
-  labelIds,
-  maxResults,
-  query,
-  userId,
-}: GmailListInput) {
-  return listGmailResource({
-    accessToken,
-    createFailedError: (cause, internal) =>
-      mailErrors.GMAIL_LIST_MESSAGES_FAILED({ cause, internal }),
-    createInvalidError: (cause, internal) =>
-      mailErrors.GMAIL_LIST_MESSAGES_RESPONSE_INVALID({ cause, internal }),
-    includeSpamTrash,
-    labelIds,
-    maxResults,
-    query,
-    resource: "messages",
-    responseSchema: gmailListMessagesResponseSchema,
-    userId,
-  });
-}
-
 export async function listGmailThreads({
   accessToken,
   includeSpamTrash = false,
@@ -107,14 +82,35 @@ export async function listGmailThreads({
 }
 
 export async function getGmailThread(accessToken: string, userId: string, threadId: string) {
+  const response = await requestGmailThread(accessToken, userId, threadId);
+  return parseGmailThreadResponse(response, userId, threadId);
+}
+
+export async function getGmailThreadIfExists(
+  accessToken: string,
+  userId: string,
+  threadId: string,
+) {
+  const response = await requestGmailThread(accessToken, userId, threadId);
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  return parseGmailThreadResponse(response, userId, threadId);
+}
+
+async function requestGmailThread(accessToken: string, userId: string, threadId: string) {
   const searchParams = new URLSearchParams({
     format: "full",
   });
   const path = `/users/${encodeURIComponent(userId)}/threads/${encodeURIComponent(
     threadId,
   )}?${searchParams.toString()}`;
-  const response = await fetchGmail(accessToken, path);
+  return fetchGmail(accessToken, path);
+}
 
+async function parseGmailThreadResponse(response: Response, userId: string, threadId: string) {
   if (!response.ok) {
     throw mailErrors.GMAIL_GET_THREAD_FAILED({
       cause: new Error(`Gmail threads.get endpoint returned HTTP ${response.status}`),
@@ -247,16 +243,19 @@ export async function sendGmailMessage({
 
 export async function listGmailHistory({
   accessToken,
+  maxResults,
   pageToken,
   startHistoryId,
   userId,
 }: {
   readonly accessToken: string;
+  readonly maxResults: number;
   readonly pageToken?: string;
   readonly startHistoryId: string;
   readonly userId: string;
 }): Promise<GmailHistoryListResponse> {
   const searchParams = new URLSearchParams({
+    maxResults: String(maxResults),
     startHistoryId,
   });
 
@@ -268,6 +267,17 @@ export async function listGmailHistory({
     accessToken,
     `/users/${encodeURIComponent(userId)}/history?${searchParams.toString()}`,
   );
+
+  if (response.status === 404) {
+    throw mailErrors.GMAIL_HISTORY_EXPIRED({
+      cause: new Error(`Gmail users.history.list endpoint returned HTTP ${response.status}`),
+      internal: {
+        dependencyStatus: response.status,
+        startHistoryId,
+        userId,
+      },
+    });
+  }
 
   if (!response.ok) {
     throw mailErrors.GMAIL_HISTORY_LIST_FAILED({

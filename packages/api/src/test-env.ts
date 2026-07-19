@@ -1,4 +1,5 @@
 export function setRequiredTestEnv() {
+  process.env.ABLY_API_KEY = "2COlaA.test-key:test-secret";
   process.env.APP_URL = "http://localhost:4000";
   process.env.BETTER_AUTH_SECRET = "test-secret-with-at-least-32-chars";
   process.env.BETTER_AUTH_URL = "http://localhost:4000";
