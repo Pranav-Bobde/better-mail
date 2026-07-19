@@ -12,6 +12,8 @@ allowBuilds:
 
 catalog:
   effect: 4.0.0-beta.99
+  "@effect/vitest": 4.0.0-beta.99
+  vitest: ^4.1.10
   dotenv: ^17.2.2
   zod: ^4.1.13
   typescript: ^6

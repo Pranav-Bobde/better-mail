@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { afterEach, test } from "node:test";
+
+import { afterEach, test } from "vitest";
 
 import { Effect, Layer, Result, Schema } from "effect";
 import type { Context } from "effect";

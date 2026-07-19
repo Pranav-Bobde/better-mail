@@ -11,7 +11,7 @@
   },
   "scripts": {
     "check-types": "tsc --noEmit",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "vitest run"
   },
   "dependencies": {
     "@code-main/db": "workspace:*",
@@ -28,6 +28,8 @@
   },
   "devDependencies": {
     "@code-main/config": "workspace:*",
-    "typescript": "catalog:"
+    "@effect/vitest": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }
