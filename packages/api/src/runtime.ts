@@ -2,6 +2,7 @@ import { Layer, ManagedRuntime } from "effect";
 
 import { GmailClient } from "./mail/gmail-client";
 import { MailboxService } from "./mail/mailbox-service";
+import { MailSyncProcessor } from "./mail/sync/processor";
 import { MailSyncRepository } from "./mail/sync/prisma-mail-sync-repository";
 
 // Effect v4 canonical idioms for this repo (pinned via Phase-0 spike against 4.0.0-beta.99):
@@ -12,7 +13,8 @@ import { MailSyncRepository } from "./mail/sync/prisma-mail-sync-repository";
 //   catalog EvlogError must unwrap it (runtime.runPromiseExit / Effect.result) — see Phase 2c/2d.
 
 // Leaf IO services merge here; dependent services compose with provideMerge when the dependency remains public.
-export const AppLayer = MailboxService.layer.pipe(
+// MailboxService needs GmailClient; MailSyncProcessor needs MailSyncRepository — both stay public downstream.
+export const AppLayer = Layer.mergeAll(MailboxService.layer, MailSyncProcessor.layer).pipe(
   Layer.provideMerge(Layer.mergeAll(GmailClient.layer, MailSyncRepository.layer)),
 );
 

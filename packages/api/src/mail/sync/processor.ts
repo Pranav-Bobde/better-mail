@@ -1,7 +1,11 @@
+import { Context, Effect, Layer } from "effect";
+import type { EvlogError } from "evlog";
+
 import type { GmailThread } from "../gmail-schemas";
 import type { MailRealtimeNotifier } from "../realtime/contracts";
 import { mailErrors } from "../errors";
 import { mailSyncEventSchema, type MailSyncEvent } from "./contracts";
+import { MailSyncRepository as MailSyncRepositoryService } from "./prisma-mail-sync-repository";
 
 export const SYNC_LEASE_SECONDS = 300;
 export const SYNC_LOCK_TTL_MS = SYNC_LEASE_SECONDS * 1000;
@@ -106,6 +110,73 @@ export type MailSyncProcessorDependencies = {
   readonly repository: MailSyncRepository;
   readonly tokenProvider: MailSyncTokenProvider;
 };
+
+type MailSyncProcessorRequestDependencies = Omit<MailSyncProcessorDependencies, "repository">;
+
+type MailSyncProcessorRequests = {
+  readonly processMailSyncEvent: (
+    rawEvent: MailSyncEvent,
+    dependencies: MailSyncProcessorRequestDependencies,
+  ) => Effect.Effect<
+    Awaited<ReturnType<typeof processMailSyncEvent>>,
+    EvlogError | MailSyncLockBusyError
+  >;
+};
+
+/**
+ * Effect v4 service wrapping the promise-based mail sync processor below. It
+ * sources its `MailSyncRepository` collaborator from the runtime and adapts it
+ * back to the promise-based repository shape the processor expects, leaving the
+ * sync/lock logic — and its by-design `MailSyncLockBusyError` lock-busy retry
+ * semantics — untouched. Per-request collaborators (gmail provider, realtime
+ * notifier, token provider, clock, lock owner, logger) stay call arguments.
+ */
+export class MailSyncProcessor extends Context.Service<
+  MailSyncProcessor,
+  MailSyncProcessorRequests
+>()("mail/MailSyncProcessor") {
+  static readonly layer = Layer.effect(
+    MailSyncProcessor,
+    Effect.gen(function* () {
+      const repository = createEffectMailSyncRepository(yield* MailSyncRepositoryService);
+
+      return MailSyncProcessor.of({
+        processMailSyncEvent: (rawEvent, dependencies) =>
+          wrapMailSyncProcessorRequest(() =>
+            processMailSyncEvent(rawEvent, { ...dependencies, repository }),
+          ),
+      });
+    }),
+  );
+}
+
+function wrapMailSyncProcessorRequest<A>(
+  request: () => Promise<A>,
+): Effect.Effect<A, EvlogError | MailSyncLockBusyError> {
+  // The lock-busy retry is by design: MailSyncLockBusyError travels the error
+  // channel unchanged so the queue worker can still branch on it (Phase 3).
+  return Effect.tryPromise({
+    catch: (error) => error as EvlogError | MailSyncLockBusyError,
+    try: request,
+  });
+}
+
+function createEffectMailSyncRepository(
+  repository: Context.Service.Shape<typeof MailSyncRepositoryService>,
+): MailSyncRepository {
+  return {
+    acquireSyncLock: (input) => Effect.runPromise(repository.acquireSyncLock(input)),
+    applyGmailThread: (input) => Effect.runPromise(repository.applyGmailThread(input)),
+    getActiveMailAccountWithCursor: (mailAccountId) =>
+      Effect.runPromise(repository.getActiveMailAccountWithCursor(mailAccountId)),
+    markGmailThreadDeleted: (input) => Effect.runPromise(repository.markGmailThreadDeleted(input)),
+    markMailAccountNeedsResync: (mailAccountId) =>
+      Effect.runPromise(repository.markMailAccountNeedsResync(mailAccountId)),
+    releaseSyncLock: (input) => Effect.runPromise(repository.releaseSyncLock(input)),
+    updateSyncCursor: (input) => Effect.runPromise(repository.updateSyncCursor(input)),
+    updateGmailWatch: (input) => Effect.runPromise(repository.updateGmailWatch(input)),
+  };
+}
 
 type GmailHistoryRecord = {
   readonly id?: string;
