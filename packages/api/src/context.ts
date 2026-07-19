@@ -25,8 +25,18 @@ export type GoogleAccessToken = {
   readonly scopes: readonly string[];
 };
 
+/**
+ * Minimal logging capability the mail services need from the request logger.
+ * Method syntax keeps the real evlog RequestLogger structurally assignable.
+ */
+export type AuthContextLog = {
+  error(error: unknown): void;
+  set(fields: Record<string, unknown>): void;
+};
+
 export type AuthContext = {
   readonly getGoogleAccessToken: (() => Promise<GoogleAccessToken>) | null;
+  readonly log?: AuthContextLog;
   readonly mailSyncBroker?: MailSyncBroker | null;
   readonly mailSyncRepository?: ReturnType<typeof createPrismaMailSyncRepository> | null;
   readonly session: AuthSession | null;

@@ -59,10 +59,8 @@ test("fetches Gmail mailbox with the Better Auth Google access token", async () 
   assert.equal(result.data.source, "gmail");
   assert.equal(result.data.messages.length, 1);
   assert.equal(result.data.messages[0]?.subject, "HTML hello");
-  assert.equal(result.data.counts.inbox, 11);
-  assert.equal(result.data.counts.unread, 5);
-  assert.equal(result.data.counts.archive, 7);
-  assert.equal(result.data.counts.shopping, 3);
+  assert.equal(result.data.counts.inboxUnread, 5);
+  assert.equal(result.data.counts.drafts, 2);
   assert.ok(mutableRequests.length > 0);
 });
 
@@ -496,10 +494,6 @@ function createMailboxReadResponse(request: Request) {
     return exactResponse;
   }
 
-  if (url.pathname === "/gmail/v1/users/me/messages") {
-    return createMailboxListResponse(url);
-  }
-
   if (url.pathname === "/gmail/v1/users/me/threads") {
     return createMailboxThreadsResponse(url);
   }
@@ -514,16 +508,64 @@ function createThreadedMailboxReadResponse(request: Request) {
     return exactResponse;
   }
 
-  if (url.pathname === "/gmail/v1/users/me/messages") {
-    return createThreadedMailboxMessagesResponse(url);
-  }
-
   if (url.pathname === "/gmail/v1/users/me/threads") {
     return createThreadedMailboxThreadsResponse(url);
   }
 
   return createGmailLabelCountResponseFromUrl(url, request.url);
 }
+
+test("falls back to zero mailbox counts when Gmail label count fetch fails", async () => {
+  const mutableRequests: Request[] = [];
+  const mutableLoggedErrors: unknown[] = [];
+  globalThis.fetch = createAuthorizedMailboxFetchMock(mutableRequests, (request) => {
+    const url = new URL(request.url);
+
+    if (url.pathname === "/gmail/v1/users/me/labels/INBOX") {
+      return Response.json(
+        {
+          error: {
+            code: 429,
+            message: "Quota exceeded for quota metric.",
+            status: "RESOURCE_EXHAUSTED",
+          },
+        },
+        { status: 429 },
+      );
+    }
+
+    return createMailboxReadResponse(request);
+  });
+
+  const authContextWithLog = {
+    ...createSignedInGmailContext("better-auth-read-token", [
+      "email",
+      "profile",
+      "https://www.googleapis.com/auth/gmail.readonly",
+    ]),
+    log: {
+      error: (error: unknown) => {
+        mutableLoggedErrors.push(error);
+      },
+      set: () => {},
+    },
+  };
+
+  const result = await getMailboxData(
+    {
+      query: "from:sender",
+      view: "unread",
+    },
+    authContextWithLog,
+  );
+
+  assert.equal(result.status, "ok");
+  assert.deepEqual(result.data.counts, {
+    drafts: 0,
+    inboxUnread: 0,
+  });
+  assert.equal(mutableLoggedErrors.length, 1);
+});
 
 function createExactMailboxReadResponse(url: URL) {
   const exactResponses = new Map<string, () => Response>([
@@ -620,27 +662,6 @@ function createSingleMessageGmailThread(url: URL) {
   };
 }
 
-function createThreadedMailboxMessagesResponse(url: URL) {
-  assert.equal(url.searchParams.get("includeSpamTrash"), "false");
-
-  if (url.searchParams.get("maxResults") === "20") {
-    const thread = createGmailThreadWithUnreadMessage();
-    assert.equal(url.searchParams.get("q"), "project");
-    assert.deepEqual(url.searchParams.getAll("labelIds"), ["INBOX"]);
-    return Response.json({
-      messages: thread.messages
-        .map((message) => ({
-          id: message.id,
-          threadId: message.threadId,
-        }))
-        .toReversed(),
-      resultSizeEstimate: 2,
-    });
-  }
-
-  return createMailboxCountMessagesResponse(url);
-}
-
 function createThreadedMailboxThreadsResponse(url: URL) {
   const thread = createGmailThreadWithUnreadMessage();
   const latestMessage = thread.messages.at(-1);
@@ -686,48 +707,20 @@ function createMailboxThreadsResponse(url: URL) {
   throw new Error(`Unexpected Gmail threads.list query: ${url.toString()}`);
 }
 
-function createMailboxListResponse(url: URL) {
-  assert.equal(url.searchParams.get("includeSpamTrash"), "false");
-  const query = url.searchParams.get("q");
-
-  if (query === "from:sender is:unread") {
-    assert.equal(url.searchParams.get("maxResults"), "20");
-    assert.deepEqual(url.searchParams.getAll("labelIds"), ["INBOX", "UNREAD"]);
-    return Response.json({
-      messages: [{ id: "18c2f5f6c5f9f001", threadId: "18c2f5f6c5f9f001" }],
-      resultSizeEstimate: 1,
-    });
-  }
-
-  return createMailboxCountMessagesResponse(url);
-}
-
-function createMailboxCountMessagesResponse(url: URL) {
-  const query = url.searchParams.get("q");
-  assert.equal(url.searchParams.get("maxResults"), "1");
-  return Response.json({
-    resultSizeEstimate: query === "-in:inbox -in:sent -in:drafts -in:trash -in:spam" ? 7 : 3,
-  });
-}
-
 function createGmailLabelCountResponse(labelId: string) {
   return {
     ...createLabel(labelId, labelId, "system"),
     messagesTotal: getSystemLabelMessageTotal(labelId),
-    messagesUnread: labelId === "UNREAD" ? 5 : 0,
+    messagesUnread: labelId === "INBOX" ? 5 : 0,
   };
 }
 
 function getSystemLabelMessageTotal(labelId: string) {
-  if (labelId === "INBOX") {
-    return 11;
+  if (labelId === "DRAFT") {
+    return 2;
   }
 
-  if (labelId === "UNREAD") {
-    return 5;
-  }
-
-  return 2;
+  return 11;
 }
 
 function createLabel(id: string, name: string, type: "system" | "user") {
@@ -759,18 +752,8 @@ function assertMailboxMessageParses(message: ReturnType<typeof toMailMessage>) {
       data: {
         account: { email: "demo-user@example.com", label: "Gmail" },
         counts: {
-          archive: 0,
           drafts: 0,
-          forums: 0,
-          inbox: 1,
-          junk: 0,
-          promotions: 0,
-          sent: 0,
-          shopping: 0,
-          social: 0,
-          trash: 0,
-          unread: 0,
-          updates: 0,
+          inboxUnread: 0,
         },
         messages: [message],
         source: "gmail",

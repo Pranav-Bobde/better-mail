@@ -232,6 +232,17 @@ export const mailErrors = defineErrorCatalog("mail", {
       module: "mail",
     },
   },
+  GMAIL_HISTORY_EXPIRED: {
+    status: 200,
+    message: "Gmail history cursor expired",
+    why: "Gmail users.history.list returned 404 because the stored history cursor is too old or no longer available",
+    fix: "Mark the mail account for resync and rebuild the mailbox cache from a fresh Gmail snapshot",
+    internal: {
+      dependency: "gmail",
+      dependencyOperation: "users.history.list",
+      module: "mail",
+    },
+  },
   GMAIL_HISTORY_LIST_RESPONSE_INVALID: {
     status: 200,
     message: "Gmail history response invalid",

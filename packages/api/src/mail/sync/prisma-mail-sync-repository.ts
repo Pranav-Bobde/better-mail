@@ -7,6 +7,7 @@ import prisma, {
 } from "@code-main/db";
 
 import type { MailboxData, MailMessage } from "../contracts";
+import { getDisplayLabels } from "../label-presentation";
 import {
   getGmailHeaderValue,
   getGmailMessageDate,
@@ -36,21 +37,6 @@ const systemLabelIds = new Set([
   "UNREAD",
 ]);
 
-const emptyMailboxCounts = {
-  archive: 0,
-  drafts: 0,
-  forums: 0,
-  inbox: 0,
-  junk: 0,
-  promotions: 0,
-  sent: 0,
-  shopping: 0,
-  social: 0,
-  trash: 0,
-  unread: 0,
-  updates: 0,
-};
-
 export function createPrismaMailSyncRepository(client: PrismaClient = prisma) {
   return {
     acquireSyncLock: async (input: {
@@ -59,6 +45,7 @@ export function createPrismaMailSyncRepository(client: PrismaClient = prisma) {
       readonly syncCursorId: string;
     }) => acquireSyncLock(client, input),
     applyGmailThread: async (input: {
+      readonly labelCatalog?: ReadonlyMap<string, { readonly name: string; readonly type: string }>;
       readonly latestMessageId: string;
       readonly mailAccountId: string;
       readonly thread: GmailThread;
@@ -242,7 +229,10 @@ export function createPrismaMailSyncRepository(client: PrismaClient = prisma) {
       readonly query: string;
       readonly userId: string;
       readonly view: "all" | "unread";
-    }) => Promise<{ readonly data: MailboxData; readonly mailAccountId: string } | null>;
+    }) => Promise<{
+      readonly data: Omit<MailboxData, "counts">;
+      readonly mailAccountId: string;
+    } | null>;
     readonly findRecentlyActiveGmailMailAccountByEmail: (input: {
       readonly activeSince: Date;
       readonly email: string;
@@ -422,7 +412,6 @@ async function getCachedMailboxData(
         email: mailAccount.email,
         label: mailAccount.email.split("@")[0] ?? mailAccount.email,
       },
-      counts: createMailboxCounts(mailAccount.threads),
       messages: mailAccount.threads.flatMap((thread) =>
         thread.latestMessage
           ? [toCachedMailMessage(thread.latestMessage, thread.providerThreadId)]
@@ -456,6 +445,7 @@ function hasCachedMailboxThreads<T extends { readonly threads: readonly unknown[
 async function applyGmailThread(
   client: PrismaClient,
   input: {
+    readonly labelCatalog?: ReadonlyMap<string, { readonly name: string; readonly type: string }>;
     readonly latestMessageId: string;
     readonly mailAccountId: string;
     readonly thread: GmailThread;
@@ -491,6 +481,7 @@ async function applyGmailThread(
 
       for (const message of input.thread.messages) {
         await upsertGmailMessage(tx, {
+          labelCatalog: input.labelCatalog,
           mailAccountId: input.mailAccountId,
           mailThreadId: mailThread.id,
           message,
@@ -524,6 +515,7 @@ async function applyGmailThread(
 async function upsertGmailMessage(
   tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
   input: {
+    readonly labelCatalog?: ReadonlyMap<string, { readonly name: string; readonly type: string }>;
     readonly mailAccountId: string;
     readonly mailThreadId: string;
     readonly message: GmailMessage;
@@ -550,6 +542,7 @@ async function upsertGmailMessage(
   });
 
   await replaceGmailMessageLabels(tx, {
+    labelCatalog: input.labelCatalog,
     labelIds: input.message.labelIds ?? [],
     mailAccountId: input.mailAccountId,
     mailMessageId: mailMessage.id,
@@ -591,6 +584,7 @@ function getNullableGmailHeader(
 async function replaceGmailMessageLabels(
   tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
   input: {
+    readonly labelCatalog?: ReadonlyMap<string, { readonly name: string; readonly type: string }>;
     readonly labelIds: readonly string[];
     readonly mailAccountId: string;
     readonly mailMessageId: string;
@@ -603,16 +597,17 @@ async function replaceGmailMessageLabels(
   });
 
   for (const labelId of input.labelIds) {
+    const labelCatalogItem = input.labelCatalog?.get(labelId);
     const label = await tx.mailLabel.upsert({
       create: {
         mailAccountId: input.mailAccountId,
-        name: labelId,
+        name: labelCatalogItem?.name ?? labelId,
         providerLabelId: labelId,
-        type: getLabelType(labelId),
+        type: labelCatalogItem?.type ?? getLabelType(labelId),
       },
       update: {
-        name: labelId,
-        type: getLabelType(labelId),
+        name: labelCatalogItem?.name ?? labelId,
+        type: labelCatalogItem?.type ?? getLabelType(labelId),
       },
       where: {
         mailAccountId_providerLabelId: {
@@ -633,14 +628,6 @@ async function replaceGmailMessageLabels(
 
 function getLabelType(labelId: string) {
   return systemLabelIds.has(labelId) ? "system" : "user";
-}
-
-function createMailboxCounts(threads: readonly { readonly isRead: boolean }[]) {
-  return {
-    ...emptyMailboxCounts,
-    inbox: threads.length,
-    unread: threads.filter((thread) => !thread.isRead).length,
-  };
 }
 
 function toCachedMailMessage(
@@ -669,7 +656,13 @@ function toCachedMailMessage(
     email: message.fromEmail,
     html: message.htmlBody ?? undefined,
     id: message.providerMessageId,
-    labels: getDisplayLabels(message.labels.map((item) => item.label)),
+    labels: getDisplayLabels(
+      message.labels.map((item) => ({
+        id: item.label.providerLabelId,
+        name: item.label.name,
+        type: item.label.type,
+      })),
+    ),
     name: message.fromName,
     read: !message.labels.some((item) => item.label.providerLabelId === "UNREAD"),
     snippet: message.snippet ?? undefined,
@@ -692,39 +685,6 @@ function getThreadFlags(messages: readonly GmailMessage[]) {
     isStarred: labelIds.includes("STARRED"),
     isTrash: labelIds.includes("TRASH"),
   };
-}
-
-function getDisplayLabels(
-  labels: readonly {
-    readonly name: string;
-    readonly providerLabelId: string;
-    readonly type: string;
-  }[],
-) {
-  return labels
-    .flatMap((label) => getDisplayLabel(label))
-    .filter((label, index, allLabels) => allLabels.indexOf(label) === index)
-    .slice(0, 3);
-}
-
-function getDisplayLabel(label: {
-  readonly name: string;
-  readonly providerLabelId: string;
-  readonly type: string;
-}) {
-  if (label.providerLabelId === "IMPORTANT") {
-    return ["important"];
-  }
-
-  if (label.providerLabelId === "STARRED") {
-    return ["starred"];
-  }
-
-  if (label.type === "user") {
-    return [label.name.toLowerCase()];
-  }
-
-  return [];
 }
 
 function getLatestGmailMessage(thread: GmailThread) {

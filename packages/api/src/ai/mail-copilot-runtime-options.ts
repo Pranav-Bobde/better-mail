@@ -4,6 +4,8 @@ import {
   convertToolsToVercelAITools,
 } from "@copilotkit/runtime/v2";
 
+import { mailboxCountsSchema } from "../mail/contracts";
+
 type StreamTextOptions = Parameters<typeof streamText>[0];
 type StreamTextTelemetry = StreamTextOptions["experimental_telemetry"];
 
@@ -138,12 +140,9 @@ function formatAccount(account: unknown, counts: unknown) {
   const accountLines = isRecord(account)
     ? [`- email: ${formatValue(account.email)}`, `- label: ${formatValue(account.label)}`]
     : ["- none"];
-  const countLines = isRecord(counts)
-    ? [
-        `- inbox: ${formatValue(counts.inbox)}`,
-        `- unread: ${formatValue(counts.unread)}`,
-        `- sent: ${formatValue(counts.sent)}`,
-      ]
+  const parsedCounts = mailboxCountsSchema.safeParse(counts);
+  const countLines = parsedCounts.success
+    ? [`- inbox unread: ${parsedCounts.data.inboxUnread}`, `- drafts: ${parsedCounts.data.drafts}`]
     : ["- counts: none"];
 
   return ["### Account", ...accountLines, ...countLines].join("\n");

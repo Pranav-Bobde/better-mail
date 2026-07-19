@@ -293,6 +293,17 @@ export async function listGmailHistory({
     `/users/${encodeURIComponent(userId)}/history?${searchParams.toString()}`,
   );
 
+  if (response.status === 404) {
+    throw mailErrors.GMAIL_HISTORY_EXPIRED({
+      cause: new Error(`Gmail users.history.list endpoint returned HTTP ${response.status}`),
+      internal: {
+        dependencyStatus: response.status,
+        startHistoryId,
+        userId,
+      },
+    });
+  }
+
   if (!response.ok) {
     throw mailErrors.GMAIL_HISTORY_LIST_FAILED({
       cause: new Error(`Gmail users.history.list endpoint returned HTTP ${response.status}`),

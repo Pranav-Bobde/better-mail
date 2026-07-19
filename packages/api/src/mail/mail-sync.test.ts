@@ -7,6 +7,7 @@ setRequiredTestEnv();
 
 const { getGmailPubSubPayloadShape, gmailPubSubPushEnvelopeSchema, mailSyncEventSchema } =
   await import("./sync/contracts");
+const { mailErrors } = await import("./errors");
 const {
   createGmailWebhookFields,
   createGmailWebhookInvalidEnvelopeFields,
@@ -16,7 +17,8 @@ const {
 const { createPrismaMailSyncRepository } = await import("./sync/prisma-mail-sync-repository");
 const { createGmailSyncProvider: createRuntimeGmailSyncProvider } =
   await import("./sync/gmail-sync-provider");
-const { MailSyncLockBusyError, processMailSyncEvent } = await import("./sync/processor");
+const { MailSyncLockBusyError, processMailSyncEvent, SYNC_LEASE_SECONDS, SYNC_LOCK_TTL_MS } =
+  await import("./sync/processor");
 const { gmailThreadResponseSchema } = await import("./gmail-schemas");
 
 test("parses real-shaped Gmail Pub/Sub push notification", () => {
@@ -454,6 +456,7 @@ test("runs Gmail incremental sync from stored cursor and updates cache before cu
     "acquire-lock:cursor-id",
     "get-token:user-id:google-account-id",
     "list-history:176001",
+    "list-labels",
     "get-thread:thread-1",
     "apply-thread:thread-1:message-2",
     "update-cursor:176009",
@@ -512,6 +515,7 @@ test("checkpoints one Gmail history page and requests a continuation", async () 
     "acquire-lock:cursor-id",
     "get-token:user-id:google-account-id",
     "list-history:176001",
+    "list-labels",
     "get-thread:thread-1",
     "apply-thread:thread-1:message-2",
     "update-cursor:176009",
@@ -596,6 +600,7 @@ test("marks unavailable Gmail history threads deleted and continues sync", async
     "acquire-lock:cursor-id",
     "get-token:user-id:google-account-id",
     "list-history:176001",
+    "list-labels",
     "get-thread:thread-1",
     "get-thread:deleted-thread",
     "apply-thread:thread-1:message-2",
@@ -624,6 +629,58 @@ test("maps Gmail threads.get 404 to an unavailable sync thread", async () => {
     const gmailProvider = createRuntimeGmailSyncProvider("projects/demo-project/topics/gmail-demo");
 
     assert.equal(await gmailProvider.getThread("access-token", "deleted-thread"), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("maps Gmail history 404 to an expired history error", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        error: {
+          code: 404,
+          message: "Requested entity was not found.",
+          status: "NOT_FOUND",
+        },
+      }),
+      { status: 404 },
+    );
+
+  try {
+    const gmailProvider = createRuntimeGmailSyncProvider("projects/demo-project/topics/gmail-demo");
+
+    await assert.rejects(
+      () => gmailProvider.listHistory("access-token", "expired-history-id"),
+      (error: unknown) => hasMailErrorCode(error, mailErrors.GMAIL_HISTORY_EXPIRED.code),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("keeps Gmail history 500 mapped to generic history list failure", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        error: {
+          code: 500,
+          message: "Backend Error",
+          status: "INTERNAL",
+        },
+      }),
+      { status: 500 },
+    );
+
+  try {
+    const gmailProvider = createRuntimeGmailSyncProvider("projects/demo-project/topics/gmail-demo");
+
+    await assert.rejects(
+      () => gmailProvider.listHistory("access-token", "176001"),
+      (error: unknown) => hasMailErrorCode(error, mailErrors.GMAIL_HISTORY_LIST_FAILED.code),
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -757,6 +814,107 @@ test("uses serverless-safe Prisma transaction timeout for Gmail thread cache wri
   assert.deepEqual(transactionOptions, [{ timeout: 120000 }]);
 });
 
+test("marks mail account for resync when Gmail history cursor expired", async () => {
+  const mutableOperations: string[] = [];
+  const mutableLogs: unknown[] = [];
+  const repository = createMailSyncRepository({ mutableOperations });
+  const gmailProvider = {
+    ...createGmailSyncProvider({ mutableOperations }),
+    listHistory: async () => {
+      mutableOperations.push("list-history:expired");
+      throw mailErrors.GMAIL_HISTORY_EXPIRED({
+        cause: new Error("Gmail users.history.list endpoint returned HTTP 404"),
+        internal: {
+          dependencyStatus: 404,
+          startHistoryId: "176001",
+          userId: "me",
+        },
+      });
+    },
+  };
+
+  await processMailSyncEvent(
+    {
+      mailAccountId: "mail-account-id",
+      type: "GMAIL_INCREMENTAL_SYNC_REQUESTED",
+    },
+    {
+      gmailProvider,
+      lockOwnerId: "queue-message-1",
+      log: {
+        info: (fields: unknown) => {
+          mutableLogs.push(fields);
+        },
+      },
+      now: new Date("2026-06-13T12:00:00.000Z"),
+      realtimeNotifier: createRealtimeNotifier(),
+      repository,
+      tokenProvider: createTokenProvider({ mutableOperations }),
+    },
+  );
+
+  assert.deepEqual(mutableOperations, [
+    "acquire-lock:cursor-id",
+    "get-token:user-id:google-account-id",
+    "list-history:expired",
+    "mark-resync:mail-account-id",
+    "release-lock:cursor-id",
+  ]);
+  assert.equal(mutableLogs.length, 1);
+});
+
+test("sync writes Gmail label names and types from catalog with fallback on miss", async () => {
+  const labelWrites: unknown[] = [];
+  const repository = createPrismaMailSyncRepository(
+    createPrismaClientForThreadApplyTest([], labelWrites) as unknown as Parameters<
+      typeof createPrismaMailSyncRepository
+    >[0],
+  );
+
+  await repository.applyGmailThread({
+    labelCatalog: new Map([["IMPORTANT", { name: "IMPORTANT", type: "system" }]]),
+    latestMessageId: "message-2",
+    mailAccountId: "mail-account-id",
+    thread: createRealShapedGmailThread(),
+    threadId: "thread-1",
+  });
+
+  assert.deepEqual(labelWrites, [
+    {
+      createName: "INBOX",
+      createType: "system",
+      providerLabelId: "INBOX",
+      updateName: "INBOX",
+      updateType: "system",
+    },
+    {
+      createName: "INBOX",
+      createType: "system",
+      providerLabelId: "INBOX",
+      updateName: "INBOX",
+      updateType: "system",
+    },
+    {
+      createName: "UNREAD",
+      createType: "system",
+      providerLabelId: "UNREAD",
+      updateName: "UNREAD",
+      updateType: "system",
+    },
+    {
+      createName: "IMPORTANT",
+      createType: "system",
+      providerLabelId: "IMPORTANT",
+      updateName: "IMPORTANT",
+      updateType: "system",
+    },
+  ]);
+});
+
+test("keeps sync lock ttl derived from queue visibility lease", () => {
+  assert.equal(SYNC_LOCK_TTL_MS, SYNC_LEASE_SECONDS * 1000);
+});
+
 function createMailSyncRepository({
   lockResult = { acquired: true as const },
   mutableOperations = [],
@@ -792,6 +950,9 @@ function createMailSyncRepository({
     markGmailThreadDeleted: async (input: { readonly threadId: string }) => {
       mutableOperations.push(`mark-thread-deleted:${input.threadId}`);
     },
+    markMailAccountNeedsResync: async (mailAccountId: string) => {
+      mutableOperations.push(`mark-resync:${mailAccountId}`);
+    },
     releaseSyncLock: async (input: {
       readonly lockOwnerId: string;
       readonly syncCursorId: string;
@@ -810,12 +971,35 @@ function createMailSyncRepository({
   };
 }
 
-function createPrismaClientForThreadApplyTest(transactionOptions: unknown[]) {
+function createPrismaClientForThreadApplyTest(
+  transactionOptions: unknown[],
+  labelWrites: unknown[] = [],
+) {
   const transactionClient = {
     mailLabel: {
-      upsert: async (input: { readonly create: { readonly providerLabelId: string } }) => ({
-        id: `mail-label-${input.create.providerLabelId}`,
-      }),
+      upsert: async (input: {
+        readonly create: {
+          readonly name: string;
+          readonly providerLabelId: string;
+          readonly type: string;
+        };
+        readonly update: {
+          readonly name: string;
+          readonly type: string;
+        };
+      }) => {
+        labelWrites.push({
+          createName: input.create.name,
+          createType: input.create.type,
+          providerLabelId: input.create.providerLabelId,
+          updateName: input.update.name,
+          updateType: input.update.type,
+        });
+
+        return {
+          id: `mail-label-${input.create.providerLabelId}`,
+        };
+      },
     },
     mailMessage: {
       findUnique: async () => ({ id: "internal-message-2" }),
@@ -851,6 +1035,16 @@ function createGmailSyncProvider({
     getThread: async (_accessToken: string, threadId: string) => {
       mutableOperations.push(`get-thread:${threadId}`);
       return createRealShapedGmailThread();
+    },
+    listLabels: async () => {
+      mutableOperations.push("list-labels");
+      return [
+        {
+          id: "IMPORTANT",
+          name: "IMPORTANT",
+          type: "system",
+        },
+      ];
     },
     listHistory: async (_accessToken: string, startHistoryId: string) => {
       mutableOperations.push(`list-history:${startHistoryId}`);
@@ -899,6 +1093,11 @@ function createTokenProvider({
       };
     },
   };
+}
+
+function hasMailErrorCode(error: unknown, code: string) {
+  const errorCode = (error as { readonly code?: unknown }).code;
+  return error instanceof Error && typeof errorCode === "string" && errorCode === code;
 }
 
 function createRealShapedGmailPubSubEnvelope() {
