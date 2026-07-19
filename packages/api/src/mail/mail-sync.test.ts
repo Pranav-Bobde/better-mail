@@ -903,6 +903,48 @@ test("sync writes Gmail label names and types from catalog with fallback on miss
   ]);
 });
 
+test("stores catalog-missing Gmail special labels like YELLOW_STAR as system", async () => {
+  const labelWrites: unknown[] = [];
+  const repository = createPrismaMailSyncRepository(
+    createPrismaClientForThreadApplyTest([], labelWrites) as unknown as Parameters<
+      typeof createPrismaMailSyncRepository
+    >[0],
+  );
+
+  // YELLOW_STAR appears in message labelIds but is never returned by labels.list,
+  // so the catalog misses it. It must not be stored as a user label (chips would
+  // render "yellow_star"); with a catalog in hand a miss is always "system".
+  const thread = createRealShapedGmailThread();
+  const starredThread = {
+    ...thread,
+    messages: thread.messages.map((message, index) =>
+      index === 0 ? { ...message, labelIds: [...(message.labelIds ?? []), "YELLOW_STAR"] } : message,
+    ),
+  };
+
+  await repository.applyGmailThread({
+    labelCatalog: new Map([["IMPORTANT", { name: "IMPORTANT", type: "system" }]]),
+    latestMessageId: "message-2",
+    mailAccountId: "mail-account-id",
+    thread: starredThread,
+    threadId: "thread-1",
+  });
+
+  const yellowStarWrites = labelWrites.filter(
+    (write) => (write as { readonly providerLabelId: string }).providerLabelId === "YELLOW_STAR",
+  );
+
+  assert.deepEqual(yellowStarWrites, [
+    {
+      createName: "YELLOW_STAR",
+      createType: "system",
+      providerLabelId: "YELLOW_STAR",
+      updateName: "YELLOW_STAR",
+      updateType: "system",
+    },
+  ]);
+});
+
 test("keeps sync lock ttl derived from queue visibility lease", () => {
   assert.equal(SYNC_LOCK_TTL_MS, SYNC_LEASE_SECONDS * 1000);
 });
