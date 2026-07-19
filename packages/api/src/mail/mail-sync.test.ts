@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { PrismaClient } from "@code-main/db";
-import { Effect } from "effect";
+import { Effect, Layer } from "effect";
+import { EvlogError } from "evlog";
 
 import type { GmailThread } from "./gmail-schemas";
 import { setRequiredTestEnv } from "../test-env";
@@ -21,8 +22,13 @@ const {
 const { MailSyncRepository } = await import("./sync/prisma-mail-sync-repository");
 const { createGmailSyncProvider: createRuntimeGmailSyncProvider } =
   await import("./sync/gmail-sync-provider");
-const { MailSyncLockBusyError, processMailSyncEvent, SYNC_LEASE_SECONDS, SYNC_LOCK_TTL_MS } =
-  await import("./sync/processor");
+const {
+  MailSyncLockBusyError,
+  MailSyncProcessor,
+  processMailSyncEvent,
+  SYNC_LEASE_SECONDS,
+  SYNC_LOCK_TTL_MS,
+} = await import("./sync/processor");
 const { gmailThreadResponseSchema } = await import("./gmail-schemas");
 
 type PrismaMailSyncRepositoryClient = PrismaClient;
@@ -396,6 +402,62 @@ test("throws a retryable lock error when the cursor is already locked", async ()
       ),
     MailSyncLockBusyError,
   );
+});
+
+test("MailSyncProcessor surfaces the raw catalog error from a failing repository service", async () => {
+  const repositoryError = mailErrors.GMAIL_HISTORY_LIST_FAILED({
+    cause: new Error("database unavailable"),
+    internal: { mailAccountId: "mail-account-id" },
+  });
+  const unused = () => Effect.die(new Error("unused repository method"));
+  const failingRepositoryLayer = Layer.succeed(
+    MailSyncRepository,
+    MailSyncRepository.of({
+      acquireSyncLock: unused,
+      applyGmailThread: unused,
+      findGmailMailAccountsDueForWatchRenewal: unused,
+      findRecentlyActiveGmailMailAccountByEmail: unused,
+      getActiveMailAccountWithCursor: () => Effect.fail(repositoryError),
+      getCachedMailboxData: unused,
+      markGmailThreadDeleted: unused,
+      markMailAccountAuthError: unused,
+      markMailAccountNeedsResync: unused,
+      markGmailMailboxActivity: unused,
+      releaseSyncLock: unused,
+      updateGmailWatch: unused,
+      updateSyncCursor: unused,
+      upsertGmailMailAccount: unused,
+    }),
+  );
+
+  const error = await Effect.runPromise(
+    Effect.provide(
+      Effect.gen(function* () {
+        const processor = yield* MailSyncProcessor;
+        return yield* Effect.flip(
+          processor.processMailSyncEvent(
+            {
+              mailAccountId: "mail-account-id",
+              type: "GMAIL_INCREMENTAL_SYNC_REQUESTED",
+            },
+            {
+              gmailProvider: createGmailSyncProvider(),
+              lockOwnerId: "queue-message-1",
+              now: new Date("2026-06-13T12:00:00.000Z"),
+              realtimeNotifier: createRealtimeNotifier(),
+              tokenProvider: createTokenProvider(),
+            },
+          ),
+        );
+      }),
+      MailSyncProcessor.layer.pipe(Layer.provide(failingRepositoryLayer)),
+    ),
+  );
+
+  // The repository adapter must re-throw the raw catalog error, not a
+  // FiberFailure wrapper, so queue worker logs keep the original error code.
+  assert.ok(error instanceof EvlogError);
+  assert.equal(error.code, mailErrors.GMAIL_HISTORY_LIST_FAILED.code);
 });
 
 test("renews Gmail watch without advancing the sync cursor", async () => {

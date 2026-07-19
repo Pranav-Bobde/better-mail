@@ -3,6 +3,7 @@ import { afterEach, test } from "node:test";
 
 import { Effect, Layer } from "effect";
 import type { Context } from "effect";
+import { EvlogError } from "evlog";
 import type { GmailClient as GmailClientIdentifier } from "./gmail-client";
 import type { MailboxService as MailboxServiceIdentifier } from "./mailbox-service";
 
@@ -103,6 +104,38 @@ test("MailboxService fetches mailbox data through the injected GmailClient servi
     "listThreads",
     "getThread:18c2f5f6c5f9f001",
   ]);
+});
+
+test("MailboxService surfaces the raw catalog EvlogError from a failing GmailClient", async () => {
+  globalThis.fetch = async () => {
+    throw new Error("fetch should not run when GmailClient is injected");
+  };
+
+  const profileError = mailErrors.GMAIL_GET_PROFILE_FAILED({
+    cause: new Error("Gmail profile endpoint returned HTTP 500"),
+    internal: { dependencyStatus: 500, userId: "me" },
+  });
+  const failingLayer = createInjectedGmailClientLayer([], {
+    getProfile: () => Effect.fail(profileError),
+  });
+
+  const error = await runWithMailboxService(failingLayer, (service) =>
+    Effect.flip(
+      service.getMailboxData(
+        { query: "", view: "all" },
+        createSignedInGmailContext("better-auth-read-token", [
+          "email",
+          "profile",
+          "https://www.googleapis.com/auth/gmail.readonly",
+        ]),
+      ),
+    ),
+  );
+
+  // The promise adapters must re-throw the raw catalog error, not a FiberFailure
+  // wrapper, so handler envelope conversion keeps seeing the original code.
+  assert.ok(error instanceof EvlogError);
+  assert.equal(error.code, mailErrors.GMAIL_GET_PROFILE_FAILED.code);
 });
 
 test("returns one Gmail mailbox row per thread", async () => {
@@ -820,7 +853,10 @@ async function runWithMailboxService<A, E>(
   );
 }
 
-function createInjectedGmailClientLayer(mutableCalls: string[]) {
+function createInjectedGmailClientLayer(
+  mutableCalls: string[],
+  overrides: Partial<Context.Service.Shape<typeof GmailClientIdentifier>> = {},
+) {
   return Layer.succeed(
     GmailClient,
     GmailClient.of({
@@ -869,6 +905,7 @@ function createInjectedGmailClientLayer(mutableCalls: string[]) {
           threadId: "sent-thread-id",
         }),
       watchMailbox: () => Effect.succeed({ expiration: "176001", historyId: "176001" }),
+      ...overrides,
     }),
   );
 }

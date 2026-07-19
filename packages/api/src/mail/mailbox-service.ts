@@ -1,6 +1,7 @@
 import { Context, Effect, Layer } from "effect";
 import { EvlogError } from "evlog";
 
+import { runPromiseRaw } from "../effect-interop";
 import type { AuthContext } from "../context";
 import type { MailboxData, MailMessage } from "./contracts";
 import { mailErrors } from "./errors";
@@ -117,15 +118,13 @@ function createEffectGmailRequests(
 ): MailboxGmailRequests {
   return {
     getLabel: (accessToken, userId, labelId) =>
-      Effect.runPromise(gmailClient.getLabel(accessToken, userId, labelId)),
-    getProfile: (accessToken, userId) =>
-      Effect.runPromise(gmailClient.getProfile(accessToken, userId)),
+      runPromiseRaw(gmailClient.getLabel(accessToken, userId, labelId)),
+    getProfile: (accessToken, userId) => runPromiseRaw(gmailClient.getProfile(accessToken, userId)),
     getThread: (accessToken, userId, threadId) =>
-      Effect.runPromise(gmailClient.getThread(accessToken, userId, threadId)),
-    listLabels: (accessToken, userId) =>
-      Effect.runPromise(gmailClient.listLabels(accessToken, userId)),
-    listThreads: (input) => Effect.runPromise(gmailClient.listThreads(input)),
-    sendMessage: (input) => Effect.runPromise(gmailClient.sendMessage(input)),
+      runPromiseRaw(gmailClient.getThread(accessToken, userId, threadId)),
+    listLabels: (accessToken, userId) => runPromiseRaw(gmailClient.listLabels(accessToken, userId)),
+    listThreads: (input) => runPromiseRaw(gmailClient.listThreads(input)),
+    sendMessage: (input) => runPromiseRaw(gmailClient.sendMessage(input)),
   };
 }
 

@@ -1,6 +1,7 @@
 import { Context, Effect, Layer } from "effect";
 import type { EvlogError } from "evlog";
 
+import { runPromiseRaw } from "../../effect-interop";
 import type { GmailThread } from "../gmail-schemas";
 import type { MailRealtimeNotifier } from "../realtime/contracts";
 import { mailErrors } from "../errors";
@@ -170,16 +171,16 @@ function createEffectMailSyncRepository(
   repository: Context.Service.Shape<typeof MailSyncRepositoryService>,
 ): MailSyncRepository {
   return {
-    acquireSyncLock: (input) => Effect.runPromise(repository.acquireSyncLock(input)),
-    applyGmailThread: (input) => Effect.runPromise(repository.applyGmailThread(input)),
+    acquireSyncLock: (input) => runPromiseRaw(repository.acquireSyncLock(input)),
+    applyGmailThread: (input) => runPromiseRaw(repository.applyGmailThread(input)),
     getActiveMailAccountWithCursor: (mailAccountId) =>
-      Effect.runPromise(repository.getActiveMailAccountWithCursor(mailAccountId)),
-    markGmailThreadDeleted: (input) => Effect.runPromise(repository.markGmailThreadDeleted(input)),
+      runPromiseRaw(repository.getActiveMailAccountWithCursor(mailAccountId)),
+    markGmailThreadDeleted: (input) => runPromiseRaw(repository.markGmailThreadDeleted(input)),
     markMailAccountNeedsResync: (mailAccountId) =>
-      Effect.runPromise(repository.markMailAccountNeedsResync(mailAccountId)),
-    releaseSyncLock: (input) => Effect.runPromise(repository.releaseSyncLock(input)),
-    updateSyncCursor: (input) => Effect.runPromise(repository.updateSyncCursor(input)),
-    updateGmailWatch: (input) => Effect.runPromise(repository.updateGmailWatch(input)),
+      runPromiseRaw(repository.markMailAccountNeedsResync(mailAccountId)),
+    releaseSyncLock: (input) => runPromiseRaw(repository.releaseSyncLock(input)),
+    updateSyncCursor: (input) => runPromiseRaw(repository.updateSyncCursor(input)),
+    updateGmailWatch: (input) => runPromiseRaw(repository.updateGmailWatch(input)),
   };
 }
 
