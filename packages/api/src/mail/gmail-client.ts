@@ -69,20 +69,39 @@ export class GmailClient extends Context.Service<GmailClient, GmailClientRequest
     // Services that depend on other services build with `Effect.gen` + `yield*`.
     Effect.sync(() =>
       GmailClient.of({
-        getLabel: (accessToken, userId, labelId) =>
-          wrapGmailRequest(() => getGmailLabel(accessToken, userId, labelId)),
-        getProfile: (accessToken, userId) =>
-          wrapGmailRequest(() => getGmailProfile(accessToken, userId)),
-        getThread: (accessToken, userId, threadId) =>
-          wrapGmailRequest(() => getGmailThread(accessToken, userId, threadId)),
-        getThreadIfExists: (accessToken, userId, threadId) =>
-          wrapGmailRequest(() => getGmailThreadIfExists(accessToken, userId, threadId)),
-        listHistory: (input) => wrapGmailRequest(() => listGmailHistory(input)),
-        listLabels: (accessToken, userId) =>
-          wrapGmailRequest(() => listGmailLabels(accessToken, userId)),
-        listThreads: (input) => wrapGmailRequest(() => listGmailThreads(input)),
-        sendMessage: (input) => wrapGmailRequest(() => sendGmailMessage(input)),
-        watchMailbox: (input) => wrapGmailRequest(() => watchGmailMailbox(input)),
+        getLabel: Effect.fn("mail/GmailClient.getLabel")(function* (accessToken, userId, labelId) {
+          return yield* wrapGmailRequest(() => getGmailLabel(accessToken, userId, labelId));
+        }),
+        getProfile: Effect.fn("mail/GmailClient.getProfile")(function* (accessToken, userId) {
+          return yield* wrapGmailRequest(() => getGmailProfile(accessToken, userId));
+        }),
+        getThread: Effect.fn("mail/GmailClient.getThread")(
+          function* (accessToken, userId, threadId) {
+            return yield* wrapGmailRequest(() => getGmailThread(accessToken, userId, threadId));
+          },
+        ),
+        getThreadIfExists: Effect.fn("mail/GmailClient.getThreadIfExists")(
+          function* (accessToken, userId, threadId) {
+            return yield* wrapGmailRequest(() =>
+              getGmailThreadIfExists(accessToken, userId, threadId),
+            );
+          },
+        ),
+        listHistory: Effect.fn("mail/GmailClient.listHistory")(function* (input) {
+          return yield* wrapGmailRequest(() => listGmailHistory(input));
+        }),
+        listLabels: Effect.fn("mail/GmailClient.listLabels")(function* (accessToken, userId) {
+          return yield* wrapGmailRequest(() => listGmailLabels(accessToken, userId));
+        }),
+        listThreads: Effect.fn("mail/GmailClient.listThreads")(function* (input) {
+          return yield* wrapGmailRequest(() => listGmailThreads(input));
+        }),
+        sendMessage: Effect.fn("mail/GmailClient.sendMessage")(function* (input) {
+          return yield* wrapGmailRequest(() => sendGmailMessage(input));
+        }),
+        watchMailbox: Effect.fn("mail/GmailClient.watchMailbox")(function* (input) {
+          return yield* wrapGmailRequest(() => watchGmailMailbox(input));
+        }),
       }),
     ),
   );
