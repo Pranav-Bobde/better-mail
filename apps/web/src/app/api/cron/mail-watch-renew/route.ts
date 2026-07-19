@@ -1,4 +1,4 @@
-import { createPrismaMailSyncRepository } from "@code-main/api/mail/sync/prisma-mail-sync-repository";
+import { findGmailMailAccountsDueForWatchRenewal } from "@code-main/api/runtime";
 
 import { vercelMailSyncBroker } from "@/shared/lib/mail-sync-queue";
 
@@ -7,8 +7,7 @@ const watchRenewalBufferMs = 48 * 60 * 60 * 1000;
 
 export async function GET() {
   const now = Date.now();
-  const repository = createPrismaMailSyncRepository();
-  const mailAccounts = await repository.findGmailMailAccountsDueForWatchRenewal({
+  const mailAccounts = await findGmailMailAccountsDueForWatchRenewal({
     activeSince: new Date(now - activeMailboxWindowMs),
     expiresBefore: new Date(now + watchRenewalBufferMs),
   });

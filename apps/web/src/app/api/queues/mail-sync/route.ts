@@ -5,9 +5,8 @@ import {
   createMailSyncWorkerFields,
   type MailSyncWideEventFields,
 } from "@code-main/api/mail/sync/observability";
-import { createPrismaMailSyncRepository } from "@code-main/api/mail/sync/prisma-mail-sync-repository";
 import { MailSyncLockBusyError, SYNC_LEASE_SECONDS } from "@code-main/api/mail/sync/processor";
-import { runMailSyncEvent } from "@code-main/api/runtime";
+import { markMailAccountNeedsResync, runMailSyncEvent } from "@code-main/api/runtime";
 import { handleCallback } from "@vercel/queue";
 
 import { log, withEvlog } from "@/shared/lib/evlog";
@@ -138,7 +137,7 @@ async function markMailAccountNeedsResyncForDroppedEvent(event: MailSyncEvent) {
   try {
     // RESYNC_NEEDED misses the ACTIVE-only cache, so the next default mailbox load
     // bootstraps live Gmail data and resets the account back to ACTIVE.
-    await createPrismaMailSyncRepository().markMailAccountNeedsResync(event.mailAccountId);
+    await markMailAccountNeedsResync(event.mailAccountId);
   } catch (error) {
     log.info({
       errorCode: getErrorCode(error),

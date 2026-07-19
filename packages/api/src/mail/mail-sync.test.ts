@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { PrismaClient } from "@code-main/db";
 import { Effect, Layer } from "effect";
 import type { Context } from "effect";
 import { EvlogError } from "evlog";
 
+import { isEvlogError, tryPromiseExpecting } from "../effect-interop";
+import type { MailSyncThreadApplyClient } from "./sync/prisma-mail-sync-repository";
 import { setRequiredTestEnv } from "../test-env";
 
 setRequiredTestEnv();
@@ -19,7 +20,8 @@ const {
   createMailSyncQueueEnqueuedFields,
   createMailSyncWorkerFields,
 } = await import("./sync/observability");
-const { MailSyncRepository } = await import("./sync/prisma-mail-sync-repository");
+const { MailSyncRepository, applyGmailThreadToClient } =
+  await import("./sync/prisma-mail-sync-repository");
 const { createGmailSyncProvider: createRuntimeGmailSyncProvider } =
   await import("./sync/gmail-sync-provider");
 const {
@@ -36,6 +38,12 @@ type TestMailSyncRepository = Pick<
   Context.Service.Shape<typeof MailSyncRepository>,
   "applyGmailThread"
 >;
+
+// Derived from the exported thread-apply seam so the in-memory transaction double
+// stays pinned to the exact structural client applyGmailThreadToClient consumes.
+type TestMailSyncTransactionClient = Parameters<
+  Parameters<MailSyncThreadApplyClient["$transaction"]>[0]
+>[0];
 
 test("parses real-shaped Gmail Pub/Sub push notification", () => {
   const parsedEnvelope = gmailPubSubPushEnvelopeSchema.parse(createRealShapedGmailPubSubEnvelope());
@@ -862,8 +870,8 @@ test("processes changed Gmail threads with bounded concurrency", async () => {
 
 test("uses serverless-safe Prisma transaction timeout for Gmail thread cache writes", async () => {
   const transactionOptions: unknown[] = [];
-  const repositoryLayer = MailSyncRepository.layerWithClient(
-    createPrismaClientForThreadApplyTest(transactionOptions) as unknown as PrismaClient,
+  const repositoryLayer = createThreadApplyRepositoryLayer(
+    createPrismaClientForThreadApplyTest(transactionOptions),
   );
 
   await runWithMailSyncRepositoryLayer(repositoryLayer, (repository) =>
@@ -929,8 +937,8 @@ test("marks mail account for resync when Gmail history cursor expired", async ()
 
 test("sync writes Gmail label names and types from catalog with fallback on miss", async () => {
   const labelWrites: unknown[] = [];
-  const repositoryLayer = MailSyncRepository.layerWithClient(
-    createPrismaClientForThreadApplyTest([], labelWrites) as unknown as PrismaClient,
+  const repositoryLayer = createThreadApplyRepositoryLayer(
+    createPrismaClientForThreadApplyTest([], labelWrites),
   );
 
   await runWithMailSyncRepositoryLayer(repositoryLayer, (repository) =>
@@ -977,8 +985,8 @@ test("sync writes Gmail label names and types from catalog with fallback on miss
 
 test("stores catalog-missing Gmail special labels like YELLOW_STAR as system", async () => {
   const labelWrites: unknown[] = [];
-  const repositoryLayer = MailSyncRepository.layerWithClient(
-    createPrismaClientForThreadApplyTest([], labelWrites) as unknown as PrismaClient,
+  const repositoryLayer = createThreadApplyRepositoryLayer(
+    createPrismaClientForThreadApplyTest([], labelWrites),
   );
 
   // YELLOW_STAR appears in message labelIds but is never returned by labels.list,
@@ -1079,6 +1087,34 @@ function createMailSyncRepository({
   };
 }
 
+// Wires only the applyGmailThread method against a narrow transaction double, so
+// the sync writer runs through the real Effect adapter without a client-wide
+// Prisma stub. Every other method is deliberately unreachable in these tests.
+function createThreadApplyRepositoryLayer(client: MailSyncThreadApplyClient) {
+  const unused = () => Effect.die(new Error("unused repository method"));
+
+  return Layer.succeed(
+    MailSyncRepository,
+    MailSyncRepository.of({
+      acquireSyncLock: unused,
+      applyGmailThread: (input) =>
+        tryPromiseExpecting(() => applyGmailThreadToClient(client, input), isEvlogError),
+      findGmailMailAccountsDueForWatchRenewal: unused,
+      findRecentlyActiveGmailMailAccountByEmail: unused,
+      getActiveMailAccountWithCursor: unused,
+      getCachedMailboxData: unused,
+      markGmailMailboxActivity: unused,
+      markGmailThreadDeleted: unused,
+      markMailAccountAuthError: unused,
+      markMailAccountNeedsResync: unused,
+      releaseSyncLock: unused,
+      updateGmailWatch: unused,
+      updateSyncCursor: unused,
+      upsertGmailMailAccount: unused,
+    }),
+  );
+}
+
 async function runWithMailSyncRepositoryLayer<A, E>(
   layer: ReturnType<typeof MailSyncRepository.layerWithClient>,
   run: (repository: TestMailSyncRepository) => Effect.Effect<A, E>,
@@ -1098,36 +1134,28 @@ function createPrismaClientForThreadApplyTest(
   transactionOptions: unknown[],
   labelWrites: unknown[] = [],
 ) {
-  const transactionClient = {
+  const transactionClient: TestMailSyncTransactionClient = {
     mailLabel: {
-      upsert: async (input: {
-        readonly create: {
-          readonly name: string;
-          readonly providerLabelId: string;
-          readonly type: string;
-        };
-        readonly update: {
-          readonly name: string;
-          readonly type: string;
-        };
-      }) => {
+      upsert: async (input) => {
+        const create = input.create;
+        const update = input.update;
         labelWrites.push({
-          createName: input.create.name,
-          createType: input.create.type,
-          providerLabelId: input.create.providerLabelId,
-          updateName: input.update.name,
-          updateType: input.update.type,
+          createName: create.name,
+          createType: create.type,
+          providerLabelId: create.providerLabelId,
+          updateName: update.name,
+          updateType: update.type,
         });
 
         return {
-          id: `mail-label-${input.create.providerLabelId}`,
+          id: `mail-label-${String(create.providerLabelId)}`,
         };
       },
     },
     mailMessage: {
       findUnique: async () => ({ id: "internal-message-2" }),
-      upsert: async (input: { readonly create: { readonly providerMessageId: string } }) => ({
-        id: `internal-${input.create.providerMessageId}`,
+      upsert: async (input) => ({
+        id: `internal-${String(input.create.providerMessageId)}`,
       }),
     },
     mailMessageLabel: {
@@ -1141,14 +1169,14 @@ function createPrismaClientForThreadApplyTest(
   };
 
   return {
-    $transaction: async (
-      callback: (client: typeof transactionClient) => Promise<unknown>,
-      options?: unknown,
+    $transaction: async <Result>(
+      callback: (client: TestMailSyncTransactionClient) => Promise<Result>,
+      options?: { readonly timeout?: number },
     ) => {
       transactionOptions.push(options);
       return callback(transactionClient);
     },
-  };
+  } satisfies MailSyncThreadApplyClient;
 }
 
 function createGmailSyncProvider({

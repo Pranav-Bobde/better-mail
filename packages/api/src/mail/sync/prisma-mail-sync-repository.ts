@@ -3,6 +3,7 @@ import prisma, {
   MailProvider,
   MailSyncCursorKind,
   MailSyncScopeType,
+  type Prisma,
   type PrismaClient,
 } from "@code-main/db";
 import { Context, Effect, Layer } from "effect";
@@ -39,6 +40,40 @@ const systemLabelIds = new Set([
   "TRASH",
   "UNREAD",
 ]);
+
+// Structural subset of the Prisma interactive transaction client that the Gmail
+// thread writer touches. Method argument types stay pinned to Prisma (the schema
+// is the single source of truth), while the narrowed return shapes let the sync
+// unit test supply a typed in-memory transaction double — no client-wide stub or
+// type assertions required to exercise applyGmailThreadToClient.
+type MailSyncTransactionClient = {
+  readonly mailLabel: {
+    upsert(args: Prisma.MailLabelUpsertArgs): Promise<{ readonly id: string }>;
+  };
+  readonly mailMessage: {
+    findUnique(args: Prisma.MailMessageFindUniqueArgs): Promise<{ readonly id: string } | null>;
+    upsert(args: Prisma.MailMessageUpsertArgs): Promise<{ readonly id: string }>;
+  };
+  readonly mailMessageLabel: {
+    create(args: Prisma.MailMessageLabelCreateArgs): Promise<unknown>;
+    deleteMany(args: Prisma.MailMessageLabelDeleteManyArgs): Promise<unknown>;
+  };
+  readonly mailThread: {
+    update(args: Prisma.MailThreadUpdateArgs): Promise<unknown>;
+    upsert(args: Prisma.MailThreadUpsertArgs): Promise<{ readonly id: string }>;
+  };
+};
+
+// The single Prisma capability applyGmailThreadToClient depends on: an
+// interactive transaction that yields the narrowed transaction client above.
+// The full PrismaClient is structurally assignable to it, so production wiring
+// is unchanged; the sync unit test supplies a typed double for the same seam.
+export type MailSyncThreadApplyClient = {
+  $transaction<Result>(
+    callback: (client: MailSyncTransactionClient) => Promise<Result>,
+    options?: { readonly timeout?: number },
+  ): Promise<Result>;
+};
 
 type PrismaMailSyncRepository = ReturnType<typeof createPrismaMailSyncRepository>;
 
@@ -121,7 +156,7 @@ export function createPrismaMailSyncRepository(client: PrismaClient = prisma) {
       readonly thread: GmailThread;
       readonly threadId: string;
     }) => {
-      await applyGmailThread(client, input);
+      await applyGmailThreadToClient(client, input);
     },
     getActiveMailAccountWithCursor: async (mailAccountId: string) => {
       const mailAccount = await client.mailAccount.findFirst({
@@ -512,8 +547,8 @@ function hasCachedMailboxThreads<T extends { readonly threads: readonly unknown[
   return Boolean(mailAccount?.threads?.length);
 }
 
-async function applyGmailThread(
-  client: PrismaClient,
+export async function applyGmailThreadToClient(
+  client: MailSyncThreadApplyClient,
   input: {
     readonly labelCatalog?: ReadonlyMap<string, { readonly name: string; readonly type: string }>;
     readonly latestMessageId: string;
@@ -583,7 +618,7 @@ async function applyGmailThread(
 }
 
 async function upsertGmailMessage(
-  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+  tx: MailSyncTransactionClient,
   input: {
     readonly labelCatalog?: ReadonlyMap<string, { readonly name: string; readonly type: string }>;
     readonly mailAccountId: string;
@@ -652,7 +687,7 @@ function getNullableGmailHeader(
 }
 
 async function replaceGmailMessageLabels(
-  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+  tx: MailSyncTransactionClient,
   input: {
     readonly labelCatalog?: ReadonlyMap<string, { readonly name: string; readonly type: string }>;
     readonly labelIds: readonly string[];

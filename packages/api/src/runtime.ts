@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Layer, ManagedRuntime } from "effect";
+import { Cause, Context, Effect, Exit, Layer, ManagedRuntime } from "effect";
 
 import { GmailClient } from "./mail/gmail-client";
 import { MailboxService } from "./mail/mailbox-service";
@@ -56,6 +56,46 @@ export function runMailSyncEvent(
   return runRequest(
     Effect.flatMap(MailSyncProcessor, (processor) =>
       processor.processMailSyncEvent(event, dependencies),
+    ),
+  );
+}
+
+// Boundary helpers for the Next.js routes that cannot import `effect`: the
+// MailSyncRepository dependency comes from the runtime layer (same singleton
+// prisma client the service is built with), so routes no longer hand-construct
+// createPrismaMailSyncRepository(). Each helper resolves the raw catalog error
+// on failure via runRequest, matching what the direct promise repository threw.
+type MailSyncRepositoryShape = Context.Service.Shape<typeof MailSyncRepository>;
+type MailSyncRepositoryRequestInput<Key extends keyof MailSyncRepositoryShape> = Parameters<
+  MailSyncRepositoryShape[Key]
+>[0];
+
+export function findRecentlyActiveGmailMailAccountByEmail(
+  input: MailSyncRepositoryRequestInput<"findRecentlyActiveGmailMailAccountByEmail">,
+) {
+  return runRequest(
+    Effect.flatMap(MailSyncRepository, (repository) =>
+      repository.findRecentlyActiveGmailMailAccountByEmail(input),
+    ),
+  );
+}
+
+export function findGmailMailAccountsDueForWatchRenewal(
+  input: MailSyncRepositoryRequestInput<"findGmailMailAccountsDueForWatchRenewal">,
+) {
+  return runRequest(
+    Effect.flatMap(MailSyncRepository, (repository) =>
+      repository.findGmailMailAccountsDueForWatchRenewal(input),
+    ),
+  );
+}
+
+export function markMailAccountNeedsResync(
+  mailAccountId: MailSyncRepositoryRequestInput<"markMailAccountNeedsResync">,
+) {
+  return runRequest(
+    Effect.flatMap(MailSyncRepository, (repository) =>
+      repository.markMailAccountNeedsResync(mailAccountId),
     ),
   );
 }

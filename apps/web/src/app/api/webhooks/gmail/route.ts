@@ -7,7 +7,7 @@ import {
   createGmailWebhookInvalidEnvelopeFields,
   type MailSyncWideEventFields,
 } from "@code-main/api/mail/sync/observability";
-import { createPrismaMailSyncRepository } from "@code-main/api/mail/sync/prisma-mail-sync-repository";
+import { findRecentlyActiveGmailMailAccountByEmail } from "@code-main/api/runtime";
 
 import { useLogger, withEvlog } from "@/shared/lib/evlog";
 import { vercelMailSyncBroker } from "@/shared/lib/mail-sync-queue";
@@ -32,8 +32,7 @@ async function handleGmailWebhook(request: Request) {
     });
   }
 
-  const repository = createPrismaMailSyncRepository();
-  const mailAccount = await repository.findRecentlyActiveGmailMailAccountByEmail({
+  const mailAccount = await findRecentlyActiveGmailMailAccountByEmail({
     activeSince: new Date(Date.now() - activeMailboxWindowMs),
     email: parsedEnvelope.data.gmailNotification.emailAddress,
   });
