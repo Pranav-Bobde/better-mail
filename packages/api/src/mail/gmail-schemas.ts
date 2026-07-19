@@ -1,186 +1,177 @@
-import { z } from "zod";
+import { Schema } from "effect";
 
-const gmailHeaderSchema = z.object({
-  name: z.string(),
-  value: z.string(),
+// Internal Gmail REST response parsing moved from zod to effect/Schema in Phase 5.
+// The oRPC wire boundary (mail/contracts.ts, sync/contracts.ts) stays on zod.
+// Parsing semantics mirror the previous zod schemas exactly: `Schema.Struct`
+// strips unexpected keys on decode like `z.object`, and `Schema.optional` accepts
+// a missing key or an explicit `undefined` like zod `.optional()`.
+
+const gmailHeaderSchema = Schema.Struct({
+  name: Schema.String,
+  value: Schema.String,
 });
 
-const gmailMessageBodySchema = z.object({
-  attachmentId: z.string().optional(),
-  data: z.string().optional(),
-  size: z.number().optional(),
+const gmailMessageBodySchema = Schema.Struct({
+  attachmentId: Schema.optional(Schema.String),
+  data: Schema.optional(Schema.String),
+  size: Schema.optional(Schema.Number),
 });
 
-const gmailMessagePartBaseSchema = z.object({
-  body: gmailMessageBodySchema.optional(),
-  filename: z.string().optional(),
-  headers: z.array(gmailHeaderSchema).optional(),
-  mimeType: z.string().optional(),
-  partId: z.string().optional(),
+// Reused as the single source of truth for the shared part fields; the two
+// nesting levels below extend it exactly as the previous `.extend({ parts })` did.
+const gmailMessagePartBaseFields = {
+  body: Schema.optional(gmailMessageBodySchema),
+  filename: Schema.optional(Schema.String),
+  headers: Schema.optional(Schema.Array(gmailHeaderSchema)),
+  mimeType: Schema.optional(Schema.String),
+  partId: Schema.optional(Schema.String),
+};
+
+const gmailMessagePartBaseSchema = Schema.Struct(gmailMessagePartBaseFields);
+
+const nestedGmailMessagePartSchema = Schema.Struct({
+  ...gmailMessagePartBaseFields,
+  parts: Schema.optional(Schema.Array(gmailMessagePartBaseSchema)),
 });
 
-const nestedGmailMessagePartSchema = gmailMessagePartBaseSchema.extend({
-  parts: z.array(gmailMessagePartBaseSchema).optional(),
+const gmailMessagePartSchema = Schema.Struct({
+  ...gmailMessagePartBaseFields,
+  parts: Schema.optional(Schema.Array(nestedGmailMessagePartSchema)),
 });
 
-const gmailMessagePartSchema = gmailMessagePartBaseSchema.extend({
-  parts: z.array(nestedGmailMessagePartSchema).optional(),
+export const gmailProfileResponseSchema = Schema.Struct({
+  emailAddress: Schema.String,
+  historyId: Schema.optional(Schema.String),
+  messagesTotal: Schema.optional(Schema.Number),
+  threadsTotal: Schema.optional(Schema.Number),
 });
 
-export const gmailProfileResponseSchema = z.object({
-  emailAddress: z.string(),
-  historyId: z.string().optional(),
-  messagesTotal: z.number().optional(),
-  threadsTotal: z.number().optional(),
-});
-
-export const gmailListMessagesResponseSchema = z.object({
-  messages: z
-    .array(
-      z.object({
-        id: z.string(),
-        threadId: z.string(),
+export const gmailListMessagesResponseSchema = Schema.Struct({
+  messages: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        threadId: Schema.String,
       }),
-    )
-    .optional(),
-  nextPageToken: z.string().optional(),
-  resultSizeEstimate: z.number().optional(),
+    ),
+  ),
+  nextPageToken: Schema.optional(Schema.String),
+  resultSizeEstimate: Schema.optional(Schema.Number),
 });
 
-export const gmailListThreadsResponseSchema = z.object({
-  nextPageToken: z.string().optional(),
-  resultSizeEstimate: z.number().optional(),
-  threads: z
-    .array(
-      z.object({
-        historyId: z.string().optional(),
-        id: z.string(),
-        snippet: z.string().optional(),
+export const gmailListThreadsResponseSchema = Schema.Struct({
+  nextPageToken: Schema.optional(Schema.String),
+  resultSizeEstimate: Schema.optional(Schema.Number),
+  threads: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        historyId: Schema.optional(Schema.String),
+        id: Schema.String,
+        snippet: Schema.optional(Schema.String),
       }),
-    )
-    .optional(),
+    ),
+  ),
 });
 
-const gmailMessageResponseSchema = z.object({
-  historyId: z.string().optional(),
-  id: z.string(),
-  internalDate: z.string().optional(),
-  labelIds: z.array(z.string()).optional(),
-  payload: gmailMessagePartSchema.optional(),
-  sizeEstimate: z.number().optional(),
-  snippet: z.string().optional(),
-  threadId: z.string(),
+const gmailMessageResponseSchema = Schema.Struct({
+  historyId: Schema.optional(Schema.String),
+  id: Schema.String,
+  internalDate: Schema.optional(Schema.String),
+  labelIds: Schema.optional(Schema.Array(Schema.String)),
+  payload: Schema.optional(gmailMessagePartSchema),
+  sizeEstimate: Schema.optional(Schema.Number),
+  snippet: Schema.optional(Schema.String),
+  threadId: Schema.String,
 });
 
-export const gmailThreadResponseSchema = z.object({
-  historyId: z.string().optional(),
-  id: z.string(),
+export const gmailThreadResponseSchema = Schema.Struct({
+  historyId: Schema.optional(Schema.String),
+  id: Schema.String,
   // A Gmail thread always carries at least its originating message.
-  messages: z.tuple([gmailMessageResponseSchema]).rest(gmailMessageResponseSchema),
+  messages: Schema.TupleWithRest(Schema.Tuple([gmailMessageResponseSchema]), [
+    gmailMessageResponseSchema,
+  ]),
 });
 
-export const gmailLabelsListResponseSchema = z.object({
-  labels: z
-    .array(
-      z.object({
-        id: z.string(),
-        labelListVisibility: z.string().optional(),
-        messageListVisibility: z.string().optional(),
-        name: z.string(),
-        type: z.string(),
+export const gmailLabelsListResponseSchema = Schema.Struct({
+  labels: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        labelListVisibility: Schema.optional(Schema.String),
+        messageListVisibility: Schema.optional(Schema.String),
+        name: Schema.String,
+        type: Schema.String,
       }),
-    )
-    .optional(),
+    ),
+  ),
 });
 
-export const gmailLabelResponseSchema = z.object({
-  id: z.string(),
-  labelListVisibility: z.string().optional(),
-  messageListVisibility: z.string().optional(),
-  messagesTotal: z.number().optional(),
-  messagesUnread: z.number().optional(),
-  name: z.string(),
-  threadsTotal: z.number().optional(),
-  threadsUnread: z.number().optional(),
-  type: z.string(),
+export const gmailLabelResponseSchema = Schema.Struct({
+  id: Schema.String,
+  labelListVisibility: Schema.optional(Schema.String),
+  messageListVisibility: Schema.optional(Schema.String),
+  messagesTotal: Schema.optional(Schema.Number),
+  messagesUnread: Schema.optional(Schema.Number),
+  name: Schema.String,
+  threadsTotal: Schema.optional(Schema.Number),
+  threadsUnread: Schema.optional(Schema.Number),
+  type: Schema.String,
 });
 
-export const gmailSendResponseSchema = z.object({
-  id: z.string(),
-  labelIds: z.array(z.string()).optional(),
-  threadId: z.string(),
+export const gmailSendResponseSchema = Schema.Struct({
+  id: Schema.String,
+  labelIds: Schema.optional(Schema.Array(Schema.String)),
+  threadId: Schema.String,
 });
 
-export const gmailHistoryListResponseSchema = z.object({
-  history: z
-    .array(
-      z.object({
-        id: z.string().optional(),
-        labelsAdded: z
-          .array(
-            z.object({
-              labelIds: z.array(z.string()).optional(),
-              message: z.object({
-                id: z.string(),
-                threadId: z.string(),
-              }),
+const gmailHistoryMessageReferenceSchema = Schema.Struct({
+  labelIds: Schema.optional(Schema.Array(Schema.String)),
+  message: Schema.Struct({
+    id: Schema.String,
+    threadId: Schema.String,
+  }),
+});
+
+const gmailHistoryMessageContainerSchema = Schema.Struct({
+  message: Schema.Struct({
+    id: Schema.String,
+    threadId: Schema.String,
+  }),
+});
+
+export const gmailHistoryListResponseSchema = Schema.Struct({
+  history: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: Schema.optional(Schema.String),
+        labelsAdded: Schema.optional(Schema.Array(gmailHistoryMessageReferenceSchema)),
+        labelsRemoved: Schema.optional(Schema.Array(gmailHistoryMessageReferenceSchema)),
+        messages: Schema.optional(
+          Schema.Array(
+            Schema.Struct({
+              id: Schema.String,
+              threadId: Schema.String,
             }),
-          )
-          .optional(),
-        labelsRemoved: z
-          .array(
-            z.object({
-              labelIds: z.array(z.string()).optional(),
-              message: z.object({
-                id: z.string(),
-                threadId: z.string(),
-              }),
-            }),
-          )
-          .optional(),
-        messages: z
-          .array(
-            z.object({
-              id: z.string(),
-              threadId: z.string(),
-            }),
-          )
-          .optional(),
-        messagesAdded: z
-          .array(
-            z.object({
-              message: z.object({
-                id: z.string(),
-                threadId: z.string(),
-              }),
-            }),
-          )
-          .optional(),
-        messagesDeleted: z
-          .array(
-            z.object({
-              message: z.object({
-                id: z.string(),
-                threadId: z.string(),
-              }),
-            }),
-          )
-          .optional(),
+          ),
+        ),
+        messagesAdded: Schema.optional(Schema.Array(gmailHistoryMessageContainerSchema)),
+        messagesDeleted: Schema.optional(Schema.Array(gmailHistoryMessageContainerSchema)),
       }),
-    )
-    .optional(),
-  historyId: z.string().optional(),
-  nextPageToken: z.string().optional(),
+    ),
+  ),
+  historyId: Schema.optional(Schema.String),
+  nextPageToken: Schema.optional(Schema.String),
 });
 
-export const gmailWatchResponseSchema = z.object({
-  expiration: z.string(),
-  historyId: z.string(),
+export const gmailWatchResponseSchema = Schema.Struct({
+  expiration: Schema.String,
+  historyId: Schema.String,
 });
 
-export type GmailLabel = z.infer<typeof gmailLabelResponseSchema>;
-export type GmailHistoryListResponse = z.infer<typeof gmailHistoryListResponseSchema>;
-export type GmailMessage = z.infer<typeof gmailMessageResponseSchema>;
-export type GmailMessagePart = z.infer<typeof gmailMessagePartSchema>;
-export type GmailThread = z.infer<typeof gmailThreadResponseSchema>;
-export type GmailWatchResponse = z.infer<typeof gmailWatchResponseSchema>;
+export type GmailLabel = typeof gmailLabelResponseSchema.Type;
+export type GmailHistoryListResponse = typeof gmailHistoryListResponseSchema.Type;
+export type GmailMessage = typeof gmailMessageResponseSchema.Type;
+export type GmailMessagePart = typeof gmailMessagePartSchema.Type;
+export type GmailThread = typeof gmailThreadResponseSchema.Type;
+export type GmailWatchResponse = typeof gmailWatchResponseSchema.Type;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import type { Context } from "effect";
 import { EvlogError } from "evlog";
 
@@ -993,7 +993,7 @@ test("stores catalog-missing Gmail special labels like YELLOW_STAR as system", a
   // so the catalog misses it. It must not be stored as a user label (chips would
   // render "yellow_star"); with a catalog in hand a miss is always "system".
   const thread = createRealShapedGmailThread();
-  const starredThread = gmailThreadResponseSchema.parse({
+  const starredThread = Schema.decodeUnknownSync(gmailThreadResponseSchema)({
     ...thread,
     messages: thread.messages.map((message, index) =>
       index === 0
@@ -1293,7 +1293,7 @@ function createRealShapedUnwrappedGmailPubSubNotification() {
 }
 
 function createRealShapedGmailThread() {
-  return gmailThreadResponseSchema.parse({
+  return Schema.decodeUnknownSync(gmailThreadResponseSchema)({
     historyId: "176009",
     id: "thread-1",
     messages: [

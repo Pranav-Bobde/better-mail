@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Result, Schema } from "effect";
 import type { Context } from "effect";
 import { EvlogError } from "evlog";
 import type { GmailClient as GmailClientIdentifier } from "./gmail-client";
@@ -316,13 +316,15 @@ test("fetches Gmail thread with the Better Auth Google access token", async () =
 });
 
 test("parses a real-shaped Gmail threads.get payload and maps it oldest-to-newest", () => {
-  const parsedThread = gmailThreadResponseSchema.safeParse(createGmailThread());
+  const parsedThread = Schema.decodeUnknownResult(gmailThreadResponseSchema)(createGmailThread());
 
-  assert.equal(parsedThread.success, true);
-  if (!parsedThread.success) return;
+  assert.equal(Result.isSuccess(parsedThread), true);
+  if (!Result.isSuccess(parsedThread)) return;
 
   const labelById = createLabelMap();
-  const messages = parsedThread.data.messages.map((message) => toMailMessage(message, labelById));
+  const messages = parsedThread.success.messages.map((message) =>
+    toMailMessage(message, labelById),
+  );
 
   // threads.get returns messages oldest-first; the conversation view relies on
   // this ordering to render the newest message last.
@@ -873,7 +875,7 @@ function createInjectedGmailClientLayer(
       getThread: (_accessToken: string, _userId: string, threadId: string) =>
         Effect.sync(() => {
           mutableCalls.push(`getThread:${threadId}`);
-          return gmailThreadResponseSchema.parse(
+          return Schema.decodeUnknownSync(gmailThreadResponseSchema)(
             createSingleMessageGmailThread(new URL(`https://gmail.test?format=full`)),
           );
         }),

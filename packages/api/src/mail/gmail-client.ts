@@ -1,6 +1,5 @@
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Result, Schema } from "effect";
 import type { EvlogError } from "evlog";
-import { z } from "zod";
 
 import { isEvlogError, tryPromiseExpecting } from "../effect-interop";
 import { mailErrors } from "./errors";
@@ -114,6 +113,23 @@ function wrapGmailRequest<A>(request: () => Promise<A>) {
   return tryPromiseExpecting(request, isEvlogError);
 }
 
+// Decodes a Gmail REST payload with effect/Schema, converting a schema mismatch
+// into the same catalog `…RESPONSE_INVALID` EvlogError the zod parser raised. The
+// SchemaError message renders the issue tree, replacing zod's `prettifyError`.
+function decodeGmailResponse<A>(
+  schema: Schema.Codec<A>,
+  payload: unknown,
+  toInvalidError: (cause: Error) => EvlogError,
+) {
+  const decoded = Schema.decodeUnknownResult(schema)(payload);
+
+  if (Result.isFailure(decoded)) {
+    throw toInvalidError(new Error(decoded.failure.message));
+  }
+
+  return decoded.success;
+}
+
 export async function getGmailProfile(accessToken: string, userId: string) {
   const response = await fetchGmail(accessToken, `/users/${encodeURIComponent(userId)}/profile`);
 
@@ -127,17 +143,14 @@ export async function getGmailProfile(accessToken: string, userId: string) {
     });
   }
 
-  const parsedProfile = gmailProfileResponseSchema.safeParse(await response.json());
-  if (!parsedProfile.success) {
-    throw mailErrors.GMAIL_GET_PROFILE_RESPONSE_INVALID({
-      cause: new Error(z.prettifyError(parsedProfile.error)),
+  return decodeGmailResponse(gmailProfileResponseSchema, await response.json(), (cause) =>
+    mailErrors.GMAIL_GET_PROFILE_RESPONSE_INVALID({
+      cause,
       internal: {
         userId,
       },
-    });
-  }
-
-  return parsedProfile.data;
+    }),
+  );
 }
 
 export async function listGmailThreads({
@@ -205,18 +218,15 @@ async function parseGmailThreadResponse(response: Response, userId: string, thre
     });
   }
 
-  const parsedThread = gmailThreadResponseSchema.safeParse(await response.json());
-  if (!parsedThread.success) {
-    throw mailErrors.GMAIL_GET_THREAD_RESPONSE_INVALID({
-      cause: new Error(z.prettifyError(parsedThread.error)),
+  return decodeGmailResponse(gmailThreadResponseSchema, await response.json(), (cause) =>
+    mailErrors.GMAIL_GET_THREAD_RESPONSE_INVALID({
+      cause,
       internal: {
         threadId,
         userId,
       },
-    });
-  }
-
-  return parsedThread.data;
+    }),
+  );
 }
 
 export async function listGmailLabels(accessToken: string, userId: string) {
@@ -232,17 +242,19 @@ export async function listGmailLabels(accessToken: string, userId: string) {
     });
   }
 
-  const parsedLabels = gmailLabelsListResponseSchema.safeParse(await response.json());
-  if (!parsedLabels.success) {
-    throw mailErrors.GMAIL_LIST_LABELS_RESPONSE_INVALID({
-      cause: new Error(z.prettifyError(parsedLabels.error)),
-      internal: {
-        userId,
-      },
-    });
-  }
+  const parsedLabels = decodeGmailResponse(
+    gmailLabelsListResponseSchema,
+    await response.json(),
+    (cause) =>
+      mailErrors.GMAIL_LIST_LABELS_RESPONSE_INVALID({
+        cause,
+        internal: {
+          userId,
+        },
+      }),
+  );
 
-  return parsedLabels.data.labels ?? [];
+  return parsedLabels.labels ?? [];
 }
 
 export async function getGmailLabel(accessToken: string, userId: string, labelId: string) {
@@ -260,18 +272,15 @@ export async function getGmailLabel(accessToken: string, userId: string, labelId
     });
   }
 
-  const parsedLabel = gmailLabelResponseSchema.safeParse(await response.json());
-  if (!parsedLabel.success) {
-    throw mailErrors.GMAIL_GET_LABEL_RESPONSE_INVALID({
-      cause: new Error(z.prettifyError(parsedLabel.error)),
+  return decodeGmailResponse(gmailLabelResponseSchema, await response.json(), (cause) =>
+    mailErrors.GMAIL_GET_LABEL_RESPONSE_INVALID({
+      cause,
       internal: {
         labelId,
         userId,
       },
-    });
-  }
-
-  return parsedLabel.data;
+    }),
+  );
 }
 
 export async function sendGmailMessage({
@@ -311,17 +320,14 @@ export async function sendGmailMessage({
     });
   }
 
-  const parsedSend = gmailSendResponseSchema.safeParse(await response.json());
-  if (!parsedSend.success) {
-    throw mailErrors.GMAIL_SEND_RESPONSE_INVALID({
-      cause: new Error(z.prettifyError(parsedSend.error)),
+  return decodeGmailResponse(gmailSendResponseSchema, await response.json(), (cause) =>
+    mailErrors.GMAIL_SEND_RESPONSE_INVALID({
+      cause,
       internal: {
         userId,
       },
-    });
-  }
-
-  return parsedSend.data;
+    }),
+  );
 }
 
 export async function listGmailHistory({
@@ -373,18 +379,15 @@ export async function listGmailHistory({
     });
   }
 
-  const parsedHistory = gmailHistoryListResponseSchema.safeParse(await response.json());
-  if (!parsedHistory.success) {
-    throw mailErrors.GMAIL_HISTORY_LIST_RESPONSE_INVALID({
-      cause: new Error(z.prettifyError(parsedHistory.error)),
+  return decodeGmailResponse(gmailHistoryListResponseSchema, await response.json(), (cause) =>
+    mailErrors.GMAIL_HISTORY_LIST_RESPONSE_INVALID({
+      cause,
       internal: {
         startHistoryId,
         userId,
       },
-    });
-  }
-
-  return parsedHistory.data;
+    }),
+  );
 }
 
 export async function watchGmailMailbox({
@@ -417,18 +420,15 @@ export async function watchGmailMailbox({
     });
   }
 
-  const parsedWatch = gmailWatchResponseSchema.safeParse(await response.json());
-  if (!parsedWatch.success) {
-    throw mailErrors.GMAIL_WATCH_RESPONSE_INVALID({
-      cause: new Error(z.prettifyError(parsedWatch.error)),
+  return decodeGmailResponse(gmailWatchResponseSchema, await response.json(), (cause) =>
+    mailErrors.GMAIL_WATCH_RESPONSE_INVALID({
+      cause,
       internal: {
         topicName,
         userId,
       },
-    });
-  }
-
-  return parsedWatch.data;
+    }),
+  );
 }
 
 function createGmailWatchBody(topicName: string, labelIds: readonly string[] | undefined) {
@@ -469,7 +469,7 @@ async function listGmailResource<T>({
     internal: Pick<GmailListErrorFields, "query" | "userId">,
   ) => Error;
   readonly resource: "messages" | "threads";
-  readonly responseSchema: z.ZodType<T>;
+  readonly responseSchema: Schema.Codec<T>;
 }) {
   const path = `/users/${encodeURIComponent(userId)}/${resource}?${createListSearchParams({
     includeSpamTrash,
@@ -491,15 +491,15 @@ async function listGmailResource<T>({
     );
   }
 
-  const parsedList = responseSchema.safeParse(await response.json());
-  if (!parsedList.success) {
-    throw createInvalidError(new Error(z.prettifyError(parsedList.error)), {
+  const parsedList = Schema.decodeUnknownResult(responseSchema)(await response.json());
+  if (Result.isFailure(parsedList)) {
+    throw createInvalidError(new Error(parsedList.failure.message), {
       query,
       userId,
     });
   }
 
-  return parsedList.data;
+  return parsedList.success;
 }
 
 function createListSearchParams({
