@@ -34,42 +34,23 @@ type GmailListErrorFields = {
   readonly userId: string;
 };
 
+// Single source of truth: every service method derives its parameter and
+// return types from the promise helper it wraps, so a helper signature change
+// propagates to the service contract automatically.
+type GmailEffectRequest<Request extends (...args: never[]) => Promise<unknown>> = (
+  ...args: Parameters<Request>
+) => Effect.Effect<Awaited<ReturnType<Request>>, EvlogError>;
+
 type GmailClientRequests = {
-  readonly getLabel: (
-    accessToken: string,
-    userId: string,
-    labelId: string,
-  ) => Effect.Effect<Awaited<ReturnType<typeof getGmailLabel>>, EvlogError>;
-  readonly getProfile: (
-    accessToken: string,
-    userId: string,
-  ) => Effect.Effect<Awaited<ReturnType<typeof getGmailProfile>>, EvlogError>;
-  readonly getThread: (
-    accessToken: string,
-    userId: string,
-    threadId: string,
-  ) => Effect.Effect<Awaited<ReturnType<typeof getGmailThread>>, EvlogError>;
-  readonly getThreadIfExists: (
-    accessToken: string,
-    userId: string,
-    threadId: string,
-  ) => Effect.Effect<Awaited<ReturnType<typeof getGmailThreadIfExists>>, EvlogError>;
-  readonly listHistory: (
-    input: Parameters<typeof listGmailHistory>[0],
-  ) => Effect.Effect<Awaited<ReturnType<typeof listGmailHistory>>, EvlogError>;
-  readonly listLabels: (
-    accessToken: string,
-    userId: string,
-  ) => Effect.Effect<Awaited<ReturnType<typeof listGmailLabels>>, EvlogError>;
-  readonly listThreads: (
-    input: GmailListInput,
-  ) => Effect.Effect<Awaited<ReturnType<typeof listGmailThreads>>, EvlogError>;
-  readonly sendMessage: (
-    input: Parameters<typeof sendGmailMessage>[0],
-  ) => Effect.Effect<Awaited<ReturnType<typeof sendGmailMessage>>, EvlogError>;
-  readonly watchMailbox: (
-    input: Parameters<typeof watchGmailMailbox>[0],
-  ) => Effect.Effect<Awaited<ReturnType<typeof watchGmailMailbox>>, EvlogError>;
+  readonly getLabel: GmailEffectRequest<typeof getGmailLabel>;
+  readonly getProfile: GmailEffectRequest<typeof getGmailProfile>;
+  readonly getThread: GmailEffectRequest<typeof getGmailThread>;
+  readonly getThreadIfExists: GmailEffectRequest<typeof getGmailThreadIfExists>;
+  readonly listHistory: GmailEffectRequest<typeof listGmailHistory>;
+  readonly listLabels: GmailEffectRequest<typeof listGmailLabels>;
+  readonly listThreads: GmailEffectRequest<typeof listGmailThreads>;
+  readonly sendMessage: GmailEffectRequest<typeof sendGmailMessage>;
+  readonly watchMailbox: GmailEffectRequest<typeof watchGmailMailbox>;
 };
 
 /**

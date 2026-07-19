@@ -58,31 +58,15 @@ type MailboxServiceRequests = {
   ) => Effect.Effect<Awaited<ReturnType<typeof sendMailboxMessage>>, EvlogError>;
 };
 
+// Single source of truth: the promise helpers ARE the request contract, so
+// both the raw and the GmailClient-backed providers stay pinned to them.
 type MailboxGmailRequests = {
-  readonly getLabel: (
-    accessToken: string,
-    userId: string,
-    labelId: string,
-  ) => Promise<Awaited<ReturnType<typeof getGmailLabel>>>;
-  readonly getProfile: (
-    accessToken: string,
-    userId: string,
-  ) => Promise<Awaited<ReturnType<typeof getGmailProfile>>>;
-  readonly getThread: (
-    accessToken: string,
-    userId: string,
-    threadId: string,
-  ) => Promise<Awaited<ReturnType<typeof getGmailThread>>>;
-  readonly listLabels: (
-    accessToken: string,
-    userId: string,
-  ) => Promise<Awaited<ReturnType<typeof listGmailLabels>>>;
-  readonly listThreads: (
-    input: Parameters<typeof listGmailThreads>[0],
-  ) => Promise<Awaited<ReturnType<typeof listGmailThreads>>>;
-  readonly sendMessage: (
-    input: Parameters<typeof sendGmailMessage>[0],
-  ) => Promise<Awaited<ReturnType<typeof sendGmailMessage>>>;
+  readonly getLabel: typeof getGmailLabel;
+  readonly getProfile: typeof getGmailProfile;
+  readonly getThread: typeof getGmailThread;
+  readonly listLabels: typeof listGmailLabels;
+  readonly listThreads: typeof listGmailThreads;
+  readonly sendMessage: typeof sendGmailMessage;
 };
 
 export class MailboxService extends Context.Service<MailboxService, MailboxServiceRequests>()(
@@ -123,14 +107,14 @@ function createEffectGmailRequests(gmailClient: Context.Service.Shape<typeof Gma
   } satisfies MailboxGmailRequests;
 }
 
-const rawGmailRequests: MailboxGmailRequests = {
+const rawGmailRequests = {
   getLabel: getGmailLabel,
   getProfile: getGmailProfile,
   getThread: getGmailThread,
   listLabels: listGmailLabels,
   listThreads: listGmailThreads,
   sendMessage: sendGmailMessage,
-};
+} satisfies MailboxGmailRequests;
 
 const mailboxErrorByOperation = {
   getMailbox: (cause: Error) =>

@@ -73,7 +73,7 @@ export class MailSyncRepository extends Context.Service<
   }
 }
 
-function createEffectMailSyncRepository(client: PrismaClient): MailSyncRepositoryRequests {
+function createEffectMailSyncRepository(client: PrismaClient) {
   const repository = createPrismaMailSyncRepository(client);
 
   return {
@@ -100,7 +100,7 @@ function createEffectMailSyncRepository(client: PrismaClient): MailSyncRepositor
     updateSyncCursor: (...args) => wrapPrismaRequest(() => repository.updateSyncCursor(...args)),
     upsertGmailMailAccount: (...args) =>
       wrapPrismaRequest(() => repository.upsertGmailMailAccount(...args)),
-  };
+  } satisfies MailSyncRepositoryRequests;
 }
 
 function wrapPrismaRequest<A>(request: () => Promise<A>) {

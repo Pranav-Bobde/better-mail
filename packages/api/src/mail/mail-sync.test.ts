@@ -3,9 +3,9 @@ import { test } from "node:test";
 
 import type { PrismaClient } from "@code-main/db";
 import { Effect, Layer } from "effect";
+import type { Context } from "effect";
 import { EvlogError } from "evlog";
 
-import type { GmailThread } from "./gmail-schemas";
 import { setRequiredTestEnv } from "../test-env";
 
 setRequiredTestEnv();
@@ -31,16 +31,11 @@ const {
 } = await import("./sync/processor");
 const { gmailThreadResponseSchema } = await import("./gmail-schemas");
 
-type PrismaMailSyncRepositoryClient = PrismaClient;
-type TestMailSyncRepository = {
-  readonly applyGmailThread: (input: {
-    readonly labelCatalog?: ReadonlyMap<string, { readonly name: string; readonly type: string }>;
-    readonly latestMessageId: string;
-    readonly mailAccountId: string;
-    readonly thread: GmailThread;
-    readonly threadId: string;
-  }) => Effect.Effect<void, unknown>;
-};
+// Derived from the service shape so the test contract cannot drift from it.
+type TestMailSyncRepository = Pick<
+  Context.Service.Shape<typeof MailSyncRepository>,
+  "applyGmailThread"
+>;
 
 test("parses real-shaped Gmail Pub/Sub push notification", () => {
   const parsedEnvelope = gmailPubSubPushEnvelopeSchema.parse(createRealShapedGmailPubSubEnvelope());
@@ -868,9 +863,7 @@ test("processes changed Gmail threads with bounded concurrency", async () => {
 test("uses serverless-safe Prisma transaction timeout for Gmail thread cache writes", async () => {
   const transactionOptions: unknown[] = [];
   const repositoryLayer = MailSyncRepository.layerWithClient(
-    createPrismaClientForThreadApplyTest(
-      transactionOptions,
-    ) as unknown as PrismaMailSyncRepositoryClient,
+    createPrismaClientForThreadApplyTest(transactionOptions) as unknown as PrismaClient,
   );
 
   await runWithMailSyncRepositoryLayer(repositoryLayer, (repository) =>
@@ -937,10 +930,7 @@ test("marks mail account for resync when Gmail history cursor expired", async ()
 test("sync writes Gmail label names and types from catalog with fallback on miss", async () => {
   const labelWrites: unknown[] = [];
   const repositoryLayer = MailSyncRepository.layerWithClient(
-    createPrismaClientForThreadApplyTest(
-      [],
-      labelWrites,
-    ) as unknown as PrismaMailSyncRepositoryClient,
+    createPrismaClientForThreadApplyTest([], labelWrites) as unknown as PrismaClient,
   );
 
   await runWithMailSyncRepositoryLayer(repositoryLayer, (repository) =>
@@ -988,10 +978,7 @@ test("sync writes Gmail label names and types from catalog with fallback on miss
 test("stores catalog-missing Gmail special labels like YELLOW_STAR as system", async () => {
   const labelWrites: unknown[] = [];
   const repositoryLayer = MailSyncRepository.layerWithClient(
-    createPrismaClientForThreadApplyTest(
-      [],
-      labelWrites,
-    ) as unknown as PrismaMailSyncRepositoryClient,
+    createPrismaClientForThreadApplyTest([], labelWrites) as unknown as PrismaClient,
   );
 
   // YELLOW_STAR appears in message labelIds but is never returned by labels.list,
