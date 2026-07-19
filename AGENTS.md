@@ -28,6 +28,8 @@
   - Tests for external-service logic with real-shaped mock payloads.
   - Test/mock values for external services must come from real observed payload shapes, not invented shapes.
 
+- Temporary docs/files created on demand during investigation or planning must go under `temp/`, not `refs/`. `refs/` is for durable project reference material only.
+
 - Commands:
   - `pnpm run dev:web`
   - `pnpm run typecheck`
@@ -45,6 +47,7 @@
 4. Present the impact clearly before changing behavior (what breaks, what improves, proposed default).
 5. Env schema keys should be required by default; make env optional only when the product behavior explicitly supports that fallback.
 6. Add new env vars as required by default; optional env needs a clear fallback reason in code/review notes and the user's approval.
-7. After every code/config/doc change, run `pnpm run typecheck`, `pnpm run lint`, `pnpm run fmt`, and `pnpm run fallow`; fix failures before review.
+7. After source code or runtime config changes, run `pnpm run typecheck`, `pnpm run lint`, `pnpm run fmt`, and `pnpm run fallow`; fix failures before review. These checks are not required for side documentation-only changes such as issue logs, plans, or refs notes.
 8. Run `pnpm run verify` before final handoff when changes are commit-bound or review-bound.
 9. Always wait for user confirmation before fixing any issue or staging changes.
+10. For reproducible user-reported issues, do not present likely causes until all available/provided evidence sources have been used first, including exact user steps, app behavior, code paths, logs, database/platform state, and browser/devtools evidence where available.
