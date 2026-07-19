@@ -1,7 +1,7 @@
 import { Context, Effect, Layer } from "effect";
 import { EvlogError } from "evlog";
 
-import { runPromiseRaw } from "../effect-interop";
+import { isEvlogError, runPromiseRaw, tryPromiseExpecting } from "../effect-interop";
 import type { AuthContext } from "../context";
 import type { MailboxData, MailMessage } from "./contracts";
 import { mailErrors } from "./errors";
@@ -106,16 +106,11 @@ export class MailboxService extends Context.Service<MailboxService, MailboxServi
   );
 }
 
-function wrapMailboxRequest<A>(request: () => Promise<A>): Effect.Effect<A, EvlogError> {
-  return Effect.tryPromise({
-    catch: (error) => error as EvlogError,
-    try: request,
-  });
+function wrapMailboxRequest<A>(request: () => Promise<A>) {
+  return tryPromiseExpecting(request, isEvlogError);
 }
 
-function createEffectGmailRequests(
-  gmailClient: Context.Service.Shape<typeof GmailClient>,
-): MailboxGmailRequests {
+function createEffectGmailRequests(gmailClient: Context.Service.Shape<typeof GmailClient>) {
   return {
     getLabel: (accessToken, userId, labelId) =>
       runPromiseRaw(gmailClient.getLabel(accessToken, userId, labelId)),
@@ -125,7 +120,7 @@ function createEffectGmailRequests(
     listLabels: (accessToken, userId) => runPromiseRaw(gmailClient.listLabels(accessToken, userId)),
     listThreads: (input) => runPromiseRaw(gmailClient.listThreads(input)),
     sendMessage: (input) => runPromiseRaw(gmailClient.sendMessage(input)),
-  };
+  } satisfies MailboxGmailRequests;
 }
 
 const rawGmailRequests: MailboxGmailRequests = {

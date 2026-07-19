@@ -6,7 +6,6 @@ import type { MailSyncEvent } from "./mail/sync/contracts";
 import {
   MailSyncProcessor,
   type MailSyncProcessorRequestDependencies,
-  type MailSyncProcessorResult,
 } from "./mail/sync/processor";
 import { MailSyncRepository } from "./mail/sync/prisma-mail-sync-repository";
 
@@ -34,7 +33,7 @@ type RuntimeServices = ManagedRuntime.ManagedRuntime.Services<typeof runtime>;
  * MailSyncLockBusyError so handler catch blocks (envelope conversion, queue
  * lock-busy retry) keep seeing the same value the promise helpers threw.
  */
-export async function runRequest<A, E>(effect: Effect.Effect<A, E, RuntimeServices>): Promise<A> {
+export async function runRequest<A, E>(effect: Effect.Effect<A, E, RuntimeServices>) {
   const exit = await runtime.runPromiseExit(effect);
 
   if (Exit.isSuccess(exit)) {
@@ -53,7 +52,7 @@ export async function runRequest<A, E>(effect: Effect.Effect<A, E, RuntimeServic
 export function runMailSyncEvent(
   event: MailSyncEvent,
   dependencies: MailSyncProcessorRequestDependencies,
-): Promise<MailSyncProcessorResult> {
+) {
   return runRequest(
     Effect.flatMap(MailSyncProcessor, (processor) =>
       processor.processMailSyncEvent(event, dependencies),

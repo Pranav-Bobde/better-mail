@@ -8,6 +8,7 @@ import prisma, {
 import { Context, Effect, Layer } from "effect";
 import type { EvlogError } from "evlog";
 
+import { isEvlogError, tryPromiseExpecting } from "../../effect-interop";
 import type { MailboxData, MailMessage } from "../contracts";
 import { getDisplayLabels } from "../label-presentation";
 import {
@@ -102,11 +103,8 @@ function createEffectMailSyncRepository(client: PrismaClient): MailSyncRepositor
   };
 }
 
-function wrapPrismaRequest<A>(request: () => Promise<A>): Effect.Effect<A, EvlogError> {
-  return Effect.tryPromise({
-    catch: (error) => error as EvlogError,
-    try: request,
-  });
+function wrapPrismaRequest<A>(request: () => Promise<A>) {
+  return tryPromiseExpecting(request, isEvlogError);
 }
 
 export function createPrismaMailSyncRepository(client: PrismaClient = prisma) {

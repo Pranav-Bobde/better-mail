@@ -2,6 +2,7 @@ import { Context, Effect, Layer } from "effect";
 import type { EvlogError } from "evlog";
 import { z } from "zod";
 
+import { isEvlogError, tryPromiseExpecting } from "../effect-interop";
 import { mailErrors } from "./errors";
 import type { GmailHistoryListResponse, GmailWatchResponse } from "./gmail-schemas";
 import {
@@ -106,14 +107,11 @@ export class GmailClient extends Context.Service<GmailClient, GmailClientRequest
   );
 }
 
-// Bridge a promise-based Gmail REST helper into the Effect error channel. The
-// helpers already throw catalog EvlogError values, so tryPromise's catch passes
-// that EvlogError through unchanged for handlers to unwrap at the boundary.
-function wrapGmailRequest<A>(request: () => Promise<A>): Effect.Effect<A, EvlogError> {
-  return Effect.tryPromise({
-    catch: (error) => error as EvlogError,
-    try: request,
-  });
+// The promise helpers already throw catalog EvlogError values, so the guard
+// passes each EvlogError through the error channel unchanged for handlers to
+// unwrap at the boundary.
+function wrapGmailRequest<A>(request: () => Promise<A>) {
+  return tryPromiseExpecting(request, isEvlogError);
 }
 
 export async function getGmailProfile(accessToken: string, userId: string) {

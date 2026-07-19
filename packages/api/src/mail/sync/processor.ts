@@ -1,7 +1,7 @@
 import { Context, Effect, Layer } from "effect";
 import type { EvlogError } from "evlog";
 
-import { runPromiseRaw } from "../../effect-interop";
+import { isEvlogError, runPromiseRaw, tryPromiseExpecting } from "../../effect-interop";
 import type { GmailThread } from "../gmail-schemas";
 import type { MailRealtimeNotifier } from "../realtime/contracts";
 import { mailErrors } from "../errors";
@@ -117,8 +117,6 @@ export type MailSyncProcessorRequestDependencies = Omit<
   "repository"
 >;
 
-export type MailSyncProcessorResult = Awaited<ReturnType<typeof processMailSyncEvent>>;
-
 type MailSyncProcessorRequests = {
   readonly processMailSyncEvent: (
     rawEvent: MailSyncEvent,
@@ -156,20 +154,19 @@ export class MailSyncProcessor extends Context.Service<
   );
 }
 
-function wrapMailSyncProcessorRequest<A>(
-  request: () => Promise<A>,
-): Effect.Effect<A, EvlogError | MailSyncLockBusyError> {
+function isMailSyncProcessorError(error: unknown): error is EvlogError | MailSyncLockBusyError {
+  return isEvlogError(error) || error instanceof MailSyncLockBusyError;
+}
+
+function wrapMailSyncProcessorRequest<A>(request: () => Promise<A>) {
   // The lock-busy retry is by design: MailSyncLockBusyError travels the error
   // channel unchanged so the queue worker can still branch on it (Phase 3).
-  return Effect.tryPromise({
-    catch: (error) => error as EvlogError | MailSyncLockBusyError,
-    try: request,
-  });
+  return tryPromiseExpecting(request, isMailSyncProcessorError);
 }
 
 function createEffectMailSyncRepository(
   repository: Context.Service.Shape<typeof MailSyncRepositoryService>,
-): MailSyncRepository {
+) {
   return {
     acquireSyncLock: (input) => runPromiseRaw(repository.acquireSyncLock(input)),
     applyGmailThread: (input) => runPromiseRaw(repository.applyGmailThread(input)),
@@ -181,7 +178,7 @@ function createEffectMailSyncRepository(
     releaseSyncLock: (input) => runPromiseRaw(repository.releaseSyncLock(input)),
     updateSyncCursor: (input) => runPromiseRaw(repository.updateSyncCursor(input)),
     updateGmailWatch: (input) => runPromiseRaw(repository.updateGmailWatch(input)),
-  };
+  } satisfies MailSyncRepository;
 }
 
 type GmailHistoryRecord = {
