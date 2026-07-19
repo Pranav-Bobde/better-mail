@@ -5,6 +5,8 @@ import prisma, {
   MailSyncScopeType,
   type PrismaClient,
 } from "@code-main/db";
+import { Context, Effect, Layer } from "effect";
+import type { EvlogError } from "evlog";
 
 import type { MailboxData, MailMessage } from "../contracts";
 import { getDisplayLabels } from "../label-presentation";
@@ -18,7 +20,7 @@ import {
   parseGmailEmailAddress,
 } from "../gmail-message-utils";
 import type { GmailMessage, GmailThread } from "../gmail-schemas";
-import type { MailSyncRepository } from "./processor";
+import type { MailSyncRepository as ProcessorMailSyncRepository } from "./processor";
 
 const gmailProviderId = "google";
 const gmailMailboxScopeId = "mailbox";
@@ -36,6 +38,76 @@ const systemLabelIds = new Set([
   "TRASH",
   "UNREAD",
 ]);
+
+type PrismaMailSyncRepository = ReturnType<typeof createPrismaMailSyncRepository>;
+
+type MailSyncRepositoryRequests = {
+  readonly [Key in keyof PrismaMailSyncRepository]: PrismaMailSyncRepository[Key] extends (
+    ...args: infer Args
+  ) => Promise<infer Result>
+    ? (...args: Args) => Effect.Effect<Result, EvlogError>
+    : never;
+};
+
+/**
+ * Effect v4 service wrapping the promise-based Prisma mail sync repository
+ * below. The underlying Prisma logic stays unchanged; methods bridge rejected
+ * promises into the Effect error channel so catalog EvlogError values keep the
+ * same boundary behavior as the promise helper.
+ */
+export class MailSyncRepository extends Context.Service<
+  MailSyncRepository,
+  MailSyncRepositoryRequests
+>()("mail/MailSyncRepository") {
+  static readonly layer = MailSyncRepository.layerWithClient(prisma);
+
+  static layerWithClient(client: PrismaClient) {
+    return Layer.effect(
+      MailSyncRepository,
+      Effect.gen(function* () {
+        yield* Effect.void;
+        return MailSyncRepository.of(createEffectMailSyncRepository(client));
+      }),
+    );
+  }
+}
+
+function createEffectMailSyncRepository(client: PrismaClient): MailSyncRepositoryRequests {
+  const repository = createPrismaMailSyncRepository(client);
+
+  return {
+    acquireSyncLock: (...args) => wrapPrismaRequest(() => repository.acquireSyncLock(...args)),
+    applyGmailThread: (...args) => wrapPrismaRequest(() => repository.applyGmailThread(...args)),
+    findGmailMailAccountsDueForWatchRenewal: (...args) =>
+      wrapPrismaRequest(() => repository.findGmailMailAccountsDueForWatchRenewal(...args)),
+    findRecentlyActiveGmailMailAccountByEmail: (...args) =>
+      wrapPrismaRequest(() => repository.findRecentlyActiveGmailMailAccountByEmail(...args)),
+    getActiveMailAccountWithCursor: (...args) =>
+      wrapPrismaRequest(() => repository.getActiveMailAccountWithCursor(...args)),
+    getCachedMailboxData: (...args) =>
+      wrapPrismaRequest(() => repository.getCachedMailboxData(...args)),
+    markGmailMailboxActivity: (...args) =>
+      wrapPrismaRequest(() => repository.markGmailMailboxActivity(...args)),
+    markGmailThreadDeleted: (...args) =>
+      wrapPrismaRequest(() => repository.markGmailThreadDeleted(...args)),
+    markMailAccountAuthError: (...args) =>
+      wrapPrismaRequest(() => repository.markMailAccountAuthError(...args)),
+    markMailAccountNeedsResync: (...args) =>
+      wrapPrismaRequest(() => repository.markMailAccountNeedsResync(...args)),
+    releaseSyncLock: (...args) => wrapPrismaRequest(() => repository.releaseSyncLock(...args)),
+    updateGmailWatch: (...args) => wrapPrismaRequest(() => repository.updateGmailWatch(...args)),
+    updateSyncCursor: (...args) => wrapPrismaRequest(() => repository.updateSyncCursor(...args)),
+    upsertGmailMailAccount: (...args) =>
+      wrapPrismaRequest(() => repository.upsertGmailMailAccount(...args)),
+  };
+}
+
+function wrapPrismaRequest<A>(request: () => Promise<A>): Effect.Effect<A, EvlogError> {
+  return Effect.tryPromise({
+    catch: (error) => error as EvlogError,
+    try: request,
+  });
+}
 
 export function createPrismaMailSyncRepository(client: PrismaClient = prisma) {
   return {
@@ -224,7 +296,7 @@ export function createPrismaMailSyncRepository(client: PrismaClient = prisma) {
       readonly historyId: string;
       readonly userId: string;
     }) => upsertGmailMailAccount(client, input),
-  } satisfies MailSyncRepository & {
+  } satisfies ProcessorMailSyncRepository & {
     readonly getCachedMailboxData: (input: {
       readonly query: string;
       readonly userId: string;

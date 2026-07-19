@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import type { PrismaClient } from "@code-main/db";
+import { Effect } from "effect";
+
+import type { GmailThread } from "./gmail-schemas";
 import { setRequiredTestEnv } from "../test-env";
 
 setRequiredTestEnv();
@@ -14,12 +18,23 @@ const {
   createMailSyncQueueEnqueuedFields,
   createMailSyncWorkerFields,
 } = await import("./sync/observability");
-const { createPrismaMailSyncRepository } = await import("./sync/prisma-mail-sync-repository");
+const { MailSyncRepository } = await import("./sync/prisma-mail-sync-repository");
 const { createGmailSyncProvider: createRuntimeGmailSyncProvider } =
   await import("./sync/gmail-sync-provider");
 const { MailSyncLockBusyError, processMailSyncEvent, SYNC_LEASE_SECONDS, SYNC_LOCK_TTL_MS } =
   await import("./sync/processor");
 const { gmailThreadResponseSchema } = await import("./gmail-schemas");
+
+type PrismaMailSyncRepositoryClient = PrismaClient;
+type TestMailSyncRepository = {
+  readonly applyGmailThread: (input: {
+    readonly labelCatalog?: ReadonlyMap<string, { readonly name: string; readonly type: string }>;
+    readonly latestMessageId: string;
+    readonly mailAccountId: string;
+    readonly thread: GmailThread;
+    readonly threadId: string;
+  }) => Effect.Effect<void, unknown>;
+};
 
 test("parses real-shaped Gmail Pub/Sub push notification", () => {
   const parsedEnvelope = gmailPubSubPushEnvelopeSchema.parse(createRealShapedGmailPubSubEnvelope());
@@ -790,18 +805,20 @@ test("processes changed Gmail threads with bounded concurrency", async () => {
 
 test("uses serverless-safe Prisma transaction timeout for Gmail thread cache writes", async () => {
   const transactionOptions: unknown[] = [];
-  const repository = createPrismaMailSyncRepository(
-    createPrismaClientForThreadApplyTest(transactionOptions) as unknown as Parameters<
-      typeof createPrismaMailSyncRepository
-    >[0],
+  const repositoryLayer = MailSyncRepository.layerWithClient(
+    createPrismaClientForThreadApplyTest(
+      transactionOptions,
+    ) as unknown as PrismaMailSyncRepositoryClient,
   );
 
-  await repository.applyGmailThread({
-    latestMessageId: "message-2",
-    mailAccountId: "mail-account-id",
-    thread: createRealShapedGmailThread(),
-    threadId: "thread-1",
-  });
+  await runWithMailSyncRepositoryLayer(repositoryLayer, (repository) =>
+    repository.applyGmailThread({
+      latestMessageId: "message-2",
+      mailAccountId: "mail-account-id",
+      thread: createRealShapedGmailThread(),
+      threadId: "thread-1",
+    }),
+  );
 
   assert.deepEqual(transactionOptions, [{ timeout: 120000 }]);
 });
@@ -857,19 +874,22 @@ test("marks mail account for resync when Gmail history cursor expired", async ()
 
 test("sync writes Gmail label names and types from catalog with fallback on miss", async () => {
   const labelWrites: unknown[] = [];
-  const repository = createPrismaMailSyncRepository(
-    createPrismaClientForThreadApplyTest([], labelWrites) as unknown as Parameters<
-      typeof createPrismaMailSyncRepository
-    >[0],
+  const repositoryLayer = MailSyncRepository.layerWithClient(
+    createPrismaClientForThreadApplyTest(
+      [],
+      labelWrites,
+    ) as unknown as PrismaMailSyncRepositoryClient,
   );
 
-  await repository.applyGmailThread({
-    labelCatalog: new Map([["IMPORTANT", { name: "IMPORTANT", type: "system" }]]),
-    latestMessageId: "message-2",
-    mailAccountId: "mail-account-id",
-    thread: createRealShapedGmailThread(),
-    threadId: "thread-1",
-  });
+  await runWithMailSyncRepositoryLayer(repositoryLayer, (repository) =>
+    repository.applyGmailThread({
+      labelCatalog: new Map([["IMPORTANT", { name: "IMPORTANT", type: "system" }]]),
+      latestMessageId: "message-2",
+      mailAccountId: "mail-account-id",
+      thread: createRealShapedGmailThread(),
+      threadId: "thread-1",
+    }),
+  );
 
   assert.deepEqual(labelWrites, [
     {
@@ -905,10 +925,11 @@ test("sync writes Gmail label names and types from catalog with fallback on miss
 
 test("stores catalog-missing Gmail special labels like YELLOW_STAR as system", async () => {
   const labelWrites: unknown[] = [];
-  const repository = createPrismaMailSyncRepository(
-    createPrismaClientForThreadApplyTest([], labelWrites) as unknown as Parameters<
-      typeof createPrismaMailSyncRepository
-    >[0],
+  const repositoryLayer = MailSyncRepository.layerWithClient(
+    createPrismaClientForThreadApplyTest(
+      [],
+      labelWrites,
+    ) as unknown as PrismaMailSyncRepositoryClient,
   );
 
   // YELLOW_STAR appears in message labelIds but is never returned by labels.list,
@@ -924,13 +945,15 @@ test("stores catalog-missing Gmail special labels like YELLOW_STAR as system", a
     ),
   });
 
-  await repository.applyGmailThread({
-    labelCatalog: new Map([["IMPORTANT", { name: "IMPORTANT", type: "system" }]]),
-    latestMessageId: "message-2",
-    mailAccountId: "mail-account-id",
-    thread: starredThread,
-    threadId: "thread-1",
-  });
+  await runWithMailSyncRepositoryLayer(repositoryLayer, (repository) =>
+    repository.applyGmailThread({
+      labelCatalog: new Map([["IMPORTANT", { name: "IMPORTANT", type: "system" }]]),
+      latestMessageId: "message-2",
+      mailAccountId: "mail-account-id",
+      thread: starredThread,
+      threadId: "thread-1",
+    }),
+  );
 
   const yellowStarWrites = labelWrites.filter(
     (write) => (write as { readonly providerLabelId: string }).providerLabelId === "YELLOW_STAR",
@@ -1005,6 +1028,21 @@ function createMailSyncRepository({
     },
     updateGmailWatch: async () => {},
   };
+}
+
+async function runWithMailSyncRepositoryLayer<A, E>(
+  layer: ReturnType<typeof MailSyncRepository.layerWithClient>,
+  run: (repository: TestMailSyncRepository) => Effect.Effect<A, E>,
+) {
+  return Effect.runPromise(
+    Effect.provide(
+      Effect.gen(function* () {
+        const repository = yield* MailSyncRepository;
+        return yield* run(repository);
+      }),
+      layer,
+    ),
+  );
 }
 
 function createPrismaClientForThreadApplyTest(

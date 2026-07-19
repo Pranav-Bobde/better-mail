@@ -1,6 +1,7 @@
 import { Layer, ManagedRuntime } from "effect";
 
 import { GmailClient } from "./mail/gmail-client";
+import { MailSyncRepository } from "./mail/sync/prisma-mail-sync-repository";
 
 // Effect v4 canonical idioms for this repo (pinned via Phase-0 spike against 4.0.0-beta.99):
 // - services: class X extends Context.Service<X, Shape>()("api/X") with static layer = Layer.effect(X, ...)
@@ -10,6 +11,6 @@ import { GmailClient } from "./mail/gmail-client";
 //   catalog EvlogError must unwrap it (runtime.runPromiseExit / Effect.result) — see Phase 2c/2d.
 
 // Leaf IO services merge here; services that depend on others compose with Layer.provide/provideMerge.
-export const AppLayer = Layer.mergeAll(GmailClient.layer);
+export const AppLayer = Layer.mergeAll(GmailClient.layer, MailSyncRepository.layer);
 
 export const runtime = ManagedRuntime.make(AppLayer);
