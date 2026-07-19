@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
+import { Effect, Layer } from "effect";
+import type { Context } from "effect";
+import type { GmailClient as GmailClientIdentifier } from "./gmail-client";
+import type { MailboxService as MailboxServiceIdentifier } from "./mailbox-service";
+
 import { setRequiredTestEnv } from "../test-env";
 
 setRequiredTestEnv();
 
-const { getMailboxData, getThreadData, sendMailboxMessage, toMailMessage } =
+const { MailboxService, getMailboxData, getThreadData, sendMailboxMessage, toMailMessage } =
   await import("./mailbox-service");
+const { GmailClient } = await import("./gmail-client");
 const { mailErrors } = await import("./errors");
 const { getMailboxOutputSchema, getThreadOutputSchema } = await import("./contracts");
 const { gmailThreadResponseSchema } = await import("./gmail-schemas");
@@ -62,6 +68,41 @@ test("fetches Gmail mailbox with the Better Auth Google access token", async () 
   assert.equal(result.data.counts.inboxUnread, 5);
   assert.equal(result.data.counts.drafts, 2);
   assert.ok(mutableRequests.length > 0);
+});
+
+test("MailboxService fetches mailbox data through the injected GmailClient service", async () => {
+  globalThis.fetch = async () => {
+    throw new Error("fetch should not run when GmailClient is injected");
+  };
+
+  const mutableCalls: string[] = [];
+  const mailboxData = await runWithMailboxService(
+    createInjectedGmailClientLayer(mutableCalls),
+    (service) =>
+      service.getMailboxData(
+        {
+          query: "project",
+          view: "unread",
+        },
+        createSignedInGmailContext("better-auth-read-token", [
+          "email",
+          "profile",
+          "https://www.googleapis.com/auth/gmail.readonly",
+        ]),
+      ),
+  );
+
+  assert.equal(mailboxData.status, "ok");
+  assert.equal(mailboxData.data.account.email, "demo-user@example.com");
+  assert.equal(mailboxData.data.messages[0]?.subject, "HTML hello");
+  assert.deepEqual(mutableCalls, [
+    "getLabel:INBOX",
+    "getLabel:DRAFT",
+    "getProfile",
+    "listLabels",
+    "listThreads",
+    "getThread:18c2f5f6c5f9f001",
+  ]);
 });
 
 test("returns one Gmail mailbox row per thread", async () => {
@@ -761,6 +802,74 @@ function assertMailboxMessageParses(message: ReturnType<typeof toMailMessage>) {
       status: "ok",
     }).success,
     true,
+  );
+}
+
+async function runWithMailboxService<A, E>(
+  gmailClientLayer: Layer.Layer<GmailClientIdentifier>,
+  run: (service: Context.Service.Shape<typeof MailboxServiceIdentifier>) => Effect.Effect<A, E>,
+) {
+  return Effect.runPromise(
+    Effect.provide(
+      Effect.gen(function* () {
+        const service = yield* MailboxService;
+        return yield* run(service);
+      }),
+      MailboxService.layer.pipe(Layer.provide(gmailClientLayer)),
+    ),
+  );
+}
+
+function createInjectedGmailClientLayer(mutableCalls: string[]) {
+  return Layer.succeed(
+    GmailClient,
+    GmailClient.of({
+      getLabel: (_accessToken: string, _userId: string, labelId: string) =>
+        Effect.sync(() => {
+          mutableCalls.push(`getLabel:${labelId}`);
+          return createGmailLabelCountResponse(labelId);
+        }),
+      getProfile: () =>
+        Effect.sync(() => {
+          mutableCalls.push("getProfile");
+          return createGmailProfileResponse();
+        }),
+      getThread: (_accessToken: string, _userId: string, threadId: string) =>
+        Effect.sync(() => {
+          mutableCalls.push(`getThread:${threadId}`);
+          return gmailThreadResponseSchema.parse(
+            createSingleMessageGmailThread(new URL(`https://gmail.test?format=full`)),
+          );
+        }),
+      getThreadIfExists: () => Effect.succeed(null),
+      listHistory: () => Effect.succeed({ history: [], historyId: "176001" }),
+      listLabels: () =>
+        Effect.sync(() => {
+          mutableCalls.push("listLabels");
+          return createGmailLabelsResponse().labels;
+        }),
+      listThreads: () =>
+        Effect.sync(() => {
+          mutableCalls.push("listThreads");
+          return {
+            resultSizeEstimate: 1,
+            threads: [
+              {
+                historyId: "12345",
+                id: "18c2f5f6c5f9f001",
+                snippet: "Hello &lt;strong&gt;Pranav&lt;/strong&gt;",
+              },
+            ],
+          };
+        }),
+      sendMessage: () =>
+        Effect.succeed({
+          id: "sent-message-id",
+          labelIds: ["SENT"],
+          threadId: "sent-thread-id",
+        }),
+      watchMailbox: () => Effect.succeed({ expiration: "176001", historyId: "176001" }),
+    }),
   );
 }
 

@@ -1,9 +1,11 @@
+import { Context, Effect, Layer } from "effect";
 import { EvlogError } from "evlog";
 
 import type { AuthContext } from "../context";
 import type { MailboxData, MailMessage } from "./contracts";
 import { mailErrors } from "./errors";
 import {
+  GmailClient,
   getGmailLabel,
   getGmailProfile,
   getGmailThread,
@@ -28,6 +30,113 @@ const gmailReadonlyScope = "https://www.googleapis.com/auth/gmail.readonly";
 const gmailSendScope = "https://www.googleapis.com/auth/gmail.send";
 
 type MailboxErrorOperation = "getMailbox" | "getThread" | "send";
+type MailboxDataInput = {
+  readonly query: string;
+  readonly view: "all" | "unread";
+};
+type SendMailboxMessageInput = {
+  readonly body: string;
+  readonly inReplyTo?: string;
+  readonly subject: string;
+  readonly threadId?: string;
+  readonly to: string;
+};
+
+type MailboxServiceRequests = {
+  readonly getMailboxData: (
+    input: MailboxDataInput,
+    authContext: AuthContext,
+  ) => Effect.Effect<Awaited<ReturnType<typeof getMailboxData>>, EvlogError>;
+  readonly getThreadData: (
+    input: { readonly threadId: string },
+    authContext: AuthContext,
+  ) => Effect.Effect<Awaited<ReturnType<typeof getThreadData>>, EvlogError>;
+  readonly sendMailboxMessage: (
+    input: SendMailboxMessageInput,
+    authContext: AuthContext,
+  ) => Effect.Effect<Awaited<ReturnType<typeof sendMailboxMessage>>, EvlogError>;
+};
+
+type MailboxGmailRequests = {
+  readonly getLabel: (
+    accessToken: string,
+    userId: string,
+    labelId: string,
+  ) => Promise<Awaited<ReturnType<typeof getGmailLabel>>>;
+  readonly getProfile: (
+    accessToken: string,
+    userId: string,
+  ) => Promise<Awaited<ReturnType<typeof getGmailProfile>>>;
+  readonly getThread: (
+    accessToken: string,
+    userId: string,
+    threadId: string,
+  ) => Promise<Awaited<ReturnType<typeof getGmailThread>>>;
+  readonly listLabels: (
+    accessToken: string,
+    userId: string,
+  ) => Promise<Awaited<ReturnType<typeof listGmailLabels>>>;
+  readonly listThreads: (
+    input: Parameters<typeof listGmailThreads>[0],
+  ) => Promise<Awaited<ReturnType<typeof listGmailThreads>>>;
+  readonly sendMessage: (
+    input: Parameters<typeof sendGmailMessage>[0],
+  ) => Promise<Awaited<ReturnType<typeof sendGmailMessage>>>;
+};
+
+export class MailboxService extends Context.Service<MailboxService, MailboxServiceRequests>()(
+  "mail/MailboxService",
+) {
+  static readonly layer = Layer.effect(
+    MailboxService,
+    Effect.gen(function* () {
+      const gmailClient = yield* GmailClient;
+      const gmail = createEffectGmailRequests(gmailClient);
+
+      return MailboxService.of({
+        getMailboxData: (input, authContext) =>
+          wrapMailboxRequest(() => getMailboxDataWithGmail(input, authContext, gmail)),
+        getThreadData: (input, authContext) =>
+          wrapMailboxRequest(() => getThreadDataWithGmail(input, authContext, gmail)),
+        sendMailboxMessage: (input, authContext) =>
+          wrapMailboxRequest(() => sendMailboxMessageWithGmail(input, authContext, gmail)),
+      });
+    }),
+  );
+}
+
+function wrapMailboxRequest<A>(request: () => Promise<A>): Effect.Effect<A, EvlogError> {
+  return Effect.tryPromise({
+    catch: (error) => error as EvlogError,
+    try: request,
+  });
+}
+
+function createEffectGmailRequests(
+  gmailClient: Context.Service.Shape<typeof GmailClient>,
+): MailboxGmailRequests {
+  return {
+    getLabel: (accessToken, userId, labelId) =>
+      Effect.runPromise(gmailClient.getLabel(accessToken, userId, labelId)),
+    getProfile: (accessToken, userId) =>
+      Effect.runPromise(gmailClient.getProfile(accessToken, userId)),
+    getThread: (accessToken, userId, threadId) =>
+      Effect.runPromise(gmailClient.getThread(accessToken, userId, threadId)),
+    listLabels: (accessToken, userId) =>
+      Effect.runPromise(gmailClient.listLabels(accessToken, userId)),
+    listThreads: (input) => Effect.runPromise(gmailClient.listThreads(input)),
+    sendMessage: (input) => Effect.runPromise(gmailClient.sendMessage(input)),
+  };
+}
+
+const rawGmailRequests: MailboxGmailRequests = {
+  getLabel: getGmailLabel,
+  getProfile: getGmailProfile,
+  getThread: getGmailThread,
+  listLabels: listGmailLabels,
+  listThreads: listGmailThreads,
+  sendMessage: sendGmailMessage,
+};
 
 const mailboxErrorByOperation = {
   getMailbox: (cause: Error) =>
@@ -53,12 +162,14 @@ const mailboxErrorByOperation = {
     }),
 } satisfies Record<MailboxErrorOperation, (cause: Error) => EvlogError>;
 
-export async function getMailboxData(
-  input: {
-    readonly query: string;
-    readonly view: "all" | "unread";
-  },
+export async function getMailboxData(input: MailboxDataInput, authContext: AuthContext) {
+  return getMailboxDataWithGmail(input, authContext, rawGmailRequests);
+}
+
+async function getMailboxDataWithGmail(
+  input: MailboxDataInput,
   authContext: AuthContext,
+  gmail: MailboxGmailRequests,
 ) {
   const credentials = await getGmailCredentials(authContext, [gmailReadonlyScope]);
   // Best-effort counts never reject, so the fetch can safely overlap the cache read.
@@ -66,6 +177,7 @@ export async function getMailboxData(
     credentials.accessToken,
     gmailUserId,
     authContext,
+    gmail,
   );
   const cachedMailboxData = await getCachedMailboxData(input, authContext);
 
@@ -88,11 +200,13 @@ export async function getMailboxData(
     input,
     credentials.accessToken,
     await countsPromise,
+    gmail,
   );
   const threadDetails = await getMailboxThreadDetails(
     credentials.accessToken,
     gmailUserId,
     mailboxBaseData.listResponse.threads ?? [],
+    gmail,
   );
   await cacheMailboxDataIfAvailable(authContext, mailboxBaseData, threadDetails);
 
@@ -132,11 +246,12 @@ async function getMailboxBaseData(
   input: { readonly query: string; readonly view: "all" | "unread" },
   accessToken: string,
   counts: MailboxData["counts"],
+  gmail: MailboxGmailRequests,
 ) {
   const [profile, gmailLabels, listResponse] = await Promise.all([
-    getGmailProfile(accessToken, gmailUserId),
-    listGmailLabels(accessToken, gmailUserId),
-    listGmailThreads({
+    gmail.getProfile(accessToken, gmailUserId),
+    gmail.listLabels(accessToken, gmailUserId),
+    gmail.listThreads({
       accessToken,
       labelIds: getListLabelIds(input.view),
       maxResults: mailboxMaxResults,
@@ -157,8 +272,9 @@ async function getMailboxThreadDetails(
   accessToken: string,
   userId: string,
   threads: readonly { readonly id: string }[],
+  gmail: MailboxGmailRequests,
 ) {
-  return Promise.all(threads.map((thread) => getGmailThread(accessToken, userId, thread.id)));
+  return Promise.all(threads.map((thread) => gmail.getThread(accessToken, userId, thread.id)));
 }
 
 function createMailboxSuccessData(
@@ -266,18 +382,17 @@ async function enqueueMailboxSyncIfAvailable(
   }
 }
 
-export async function sendMailboxMessage(
-  input: {
-    readonly body: string;
-    readonly inReplyTo?: string;
-    readonly subject: string;
-    readonly threadId?: string;
-    readonly to: string;
-  },
+export async function sendMailboxMessage(input: SendMailboxMessageInput, authContext: AuthContext) {
+  return sendMailboxMessageWithGmail(input, authContext, rawGmailRequests);
+}
+
+async function sendMailboxMessageWithGmail(
+  input: SendMailboxMessageInput,
   authContext: AuthContext,
+  gmail: MailboxGmailRequests,
 ) {
   const credentials = await getGmailCredentials(authContext, [gmailSendScope]);
-  const sentMessage = await sendGmailMessage({
+  const sentMessage = await gmail.sendMessage({
     accessToken: credentials.accessToken,
     raw: createRawMimeMessage(input),
     threadId: input.threadId,
@@ -297,10 +412,18 @@ export async function getThreadData(
   input: { readonly threadId: string },
   authContext: AuthContext,
 ) {
+  return getThreadDataWithGmail(input, authContext, rawGmailRequests);
+}
+
+async function getThreadDataWithGmail(
+  input: { readonly threadId: string },
+  authContext: AuthContext,
+  gmail: MailboxGmailRequests,
+) {
   const credentials = await getGmailCredentials(authContext, [gmailReadonlyScope]);
   const [gmailLabels, thread] = await Promise.all([
-    listGmailLabels(credentials.accessToken, gmailUserId),
-    getGmailThread(credentials.accessToken, gmailUserId, input.threadId),
+    gmail.listLabels(credentials.accessToken, gmailUserId),
+    gmail.getThread(credentials.accessToken, gmailUserId, input.threadId),
   ]);
   const labelById = new Map(gmailLabels.map((label) => [label.id, label]));
 
@@ -385,9 +508,10 @@ async function getMailboxCountsBestEffort(
   accessToken: string,
   userId: string,
   authContext: AuthContext,
+  gmail: MailboxGmailRequests,
 ) {
   try {
-    return await getMailboxCounts(accessToken, userId);
+    return await getMailboxCounts(accessToken, userId, gmail);
   } catch (error) {
     logMailboxError(authContext.log, error, "getMailbox");
     return {
@@ -397,10 +521,10 @@ async function getMailboxCountsBestEffort(
   }
 }
 
-async function getMailboxCounts(accessToken: string, userId: string) {
+async function getMailboxCounts(accessToken: string, userId: string, gmail: MailboxGmailRequests) {
   const [inboxLabel, draftLabel] = await Promise.all([
-    getGmailLabel(accessToken, userId, "INBOX"),
-    getGmailLabel(accessToken, userId, "DRAFT"),
+    gmail.getLabel(accessToken, userId, "INBOX"),
+    gmail.getLabel(accessToken, userId, "DRAFT"),
   ]);
 
   return {
@@ -510,12 +634,14 @@ function getMailboxLabel(email: string) {
 }
 
 function toLabelLike(labelId: string, labelById: ReadonlyMap<string, GmailLabel>) {
-  const label = labelById.get(labelId);
+  return labelById.get(labelId) ?? createFallbackLabel(labelId);
+}
 
+function createFallbackLabel(labelId: string) {
   return {
     id: labelId,
-    name: label?.name ?? labelId,
-    type: label?.type ?? "system",
+    name: labelId,
+    type: "system" as const,
   };
 }
 

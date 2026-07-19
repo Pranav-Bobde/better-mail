@@ -1,6 +1,7 @@
 import { Layer, ManagedRuntime } from "effect";
 
 import { GmailClient } from "./mail/gmail-client";
+import { MailboxService } from "./mail/mailbox-service";
 import { MailSyncRepository } from "./mail/sync/prisma-mail-sync-repository";
 
 // Effect v4 canonical idioms for this repo (pinned via Phase-0 spike against 4.0.0-beta.99):
@@ -10,7 +11,9 @@ import { MailSyncRepository } from "./mail/sync/prisma-mail-sync-repository";
 // - runtime.runPromise rejects with a wrapping FiberFailure, not the raw error: callers that need the
 //   catalog EvlogError must unwrap it (runtime.runPromiseExit / Effect.result) — see Phase 2c/2d.
 
-// Leaf IO services merge here; services that depend on others compose with Layer.provide/provideMerge.
-export const AppLayer = Layer.mergeAll(GmailClient.layer, MailSyncRepository.layer);
+// Leaf IO services merge here; dependent services compose with provideMerge when the dependency remains public.
+export const AppLayer = MailboxService.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(GmailClient.layer, MailSyncRepository.layer)),
+);
 
 export const runtime = ManagedRuntime.make(AppLayer);
