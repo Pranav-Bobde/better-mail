@@ -49,7 +49,9 @@ import {
   type DraftEmailDecision,
 } from "@/features/mail/components/ask-ai-panel";
 import {
+  claimDraftToolCall,
   createAiSearchQuery,
+  createComposeStateFromDraft,
   createForwardBody,
   draftEmailParameters,
   emptyComposeState,
@@ -58,6 +60,7 @@ import {
   getClientMailSearchQuery,
   getAiMailView,
   getForwardSubject,
+  getReplySubject,
   type ComposeState,
   type DraftEmailInput,
   type EmailFilterInput,
@@ -164,6 +167,10 @@ function MailWorkspace({
     {},
   );
   const [pendingOpenSearchQuery, setPendingOpenSearchQuery] = React.useState<string | null>(null);
+  // Tool-call ids whose handler side-effects already ran. CopilotKit v2 re-runs a
+  // frontend-tool handler each time the tool re-registers, so this guards against
+  // replayed setActiveDraft/setIsAiOpen re-opening the panel after a send.
+  const handledDraftToolCalls = React.useRef(new Set<string>());
   const layout = createMailLayout(defaultLayout);
   const {
     errorMessage: mailboxErrorMessage,
@@ -321,10 +328,22 @@ function MailWorkspace({
     {
       description: getDraftToolDescription(selectedMail),
       followUp: false,
-      handler: async (input: DraftEmailInput) => {
+      handler: async (input: DraftEmailInput, context) => {
+        const result = `draft_ready: Draft preview ready for ${input.to} with subject "${input.subject}". Awaiting user review.`;
+
+        // On replay, return the same result with no side-effects so the panel
+        // never re-opens after the user has sent or dismissed the draft.
+        if (!claimDraftToolCall(handledDraftToolCalls.current, context.toolCall.id)) {
+          return result;
+        }
+
         setActiveDraft(input);
+        // Kept behind the replay guard rather than removed: the run loop can
+        // deliver this tool call after the panel closed (the request keeps
+        // streaming once the chat unmounts), so a first-time draft still opens
+        // the panel to surface its preview.
         setIsAiOpen(true);
-        return `draft_ready: Draft preview ready for ${input.to} with subject "${input.subject}". Awaiting user review.`;
+        return result;
       },
       name: "draftEmail",
       parameters: draftEmailParameters,
@@ -364,13 +383,20 @@ function MailWorkspace({
     {
       description: getForwardToolDescription(selectedMail),
       followUp: false,
-      handler: async (input: ForwardEmailInput) => {
+      handler: async (input: ForwardEmailInput, context) => {
         if (!selectedMail) {
           return "no_selected_email: Ask the user to open the email they want to forward first.";
         }
 
+        const result = `forward_ready: Forward preview ready for ${input.to}. Awaiting user review.`;
+
+        // On replay, skip re-opening the panel and return the same result.
+        if (!claimDraftToolCall(handledDraftToolCalls.current, context.toolCall.id)) {
+          return result;
+        }
+
         setIsAiOpen(true);
-        return `forward_ready: Forward preview ready for ${input.to}. Awaiting user review.`;
+        return result;
       },
       name: "forwardEmail",
       parameters: forwardEmailParameters,
@@ -405,6 +431,11 @@ function MailWorkspace({
         threadId: compose.threadId,
         to: result.data.to,
       });
+      // Record the terminal "sent" state before clearing the active draft so a
+      // replayed preview card renders as sent and non-actionable.
+      if (activeDraft) {
+        markDraftDecision(activeDraft, "sent");
+      }
       setActiveDraft(null);
       setCompose(emptyComposeState);
       setComposeNotice("");
@@ -1027,14 +1058,6 @@ function toMailView(value: string): MailView {
   return "all";
 }
 
-function getReplySubject(subject: string) {
-  if (subject.toLowerCase().startsWith("re:")) {
-    return subject;
-  }
-
-  return `Re: ${subject}`;
-}
-
 function createCompactMailContext(mail: MailItem) {
   return {
     date: mail.date,
@@ -1053,19 +1076,6 @@ function createSelectedMailContext(mail: MailItem) {
     ...createCompactMailContext(mail),
     text: mail.text,
   };
-}
-
-function createComposeStateFromDraft(draft: DraftEmailInput, selectedMail: MailItem | null) {
-  const replyContext = getReplyContext(draft, selectedMail);
-
-  return {
-    body: draft.body,
-    inReplyTo: replyContext?.inReplyTo,
-    open: true,
-    subject: draft.subject,
-    threadId: replyContext?.threadId,
-    to: draft.to,
-  } satisfies ComposeState;
 }
 
 function getDraftToolDescription(selectedMail: MailItem | null) {
@@ -1099,21 +1109,6 @@ function createForwardDraftArgs(
     responseText: args.note,
     subject: getForwardSubject(selectedMail.subject),
     to: args.to,
-  };
-}
-
-function getReplyContext(draft: DraftEmailInput, selectedMail: MailItem | null) {
-  if (!selectedMail) {
-    return null;
-  }
-
-  if (draft.to !== selectedMail.email || !draft.subject.toLowerCase().startsWith("re:")) {
-    return null;
-  }
-
-  return {
-    inReplyTo: selectedMail.id,
-    threadId: selectedMail.threadId,
   };
 }
 

@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  claimDraftToolCall,
   createAiSearchQuery,
+  createComposeStateFromDraft,
   createForwardBody,
   draftEmailParameters,
   filterEmailParameters,
@@ -10,6 +12,13 @@ import {
   getClientMailSearchQuery,
   getForwardSubject,
 } from "@/features/mail/components/mail-ai-tools";
+
+const replySource = {
+  email: "sarah@example.com",
+  id: "msg-1",
+  subject: "Project kickoff",
+  threadId: "thread-1",
+};
 
 test("draft tool accepts real-shaped assistant draft values", () => {
   const result = draftEmailParameters.safeParse({
@@ -98,4 +107,34 @@ test("forward tool requires a valid recipient email", () => {
     forwardEmailParameters.safeParse({ to: "john@example.com", note: "FYI" }).success,
     true,
   );
+});
+
+test("reply draft compose routes the subject through the single-Re guard", () => {
+  const compose = createComposeStateFromDraft(
+    { body: "On my way.", subject: "RE: Project kickoff", to: "sarah@example.com" },
+    replySource,
+  );
+
+  assert.equal(compose.subject, "RE: Project kickoff");
+  assert.equal(compose.inReplyTo, "msg-1");
+  assert.equal(compose.threadId, "thread-1");
+});
+
+test("non-reply draft compose keeps the subject verbatim without reply context", () => {
+  const compose = createComposeStateFromDraft(
+    { body: "New topic.", subject: "Lunch?", to: "sarah@example.com" },
+    replySource,
+  );
+
+  assert.equal(compose.subject, "Lunch?");
+  assert.equal(compose.inReplyTo, undefined);
+  assert.equal(compose.threadId, undefined);
+});
+
+test("draft tool-call guard claims each id once and reports replays", () => {
+  const handled = new Set<string>();
+
+  assert.equal(claimDraftToolCall(handled, "call-1"), true);
+  assert.equal(claimDraftToolCall(handled, "call-1"), false);
+  assert.equal(claimDraftToolCall(handled, "call-2"), true);
 });
