@@ -29,6 +29,14 @@ const mailboxMaxResults = 20;
 const gmailUserId = "me";
 const gmailReadonlyScope = "https://www.googleapis.com/auth/gmail.readonly";
 const gmailSendScope = "https://www.googleapis.com/auth/gmail.send";
+const mimeHeaderEncodedWordPrefix = "=?UTF-8?B?";
+const mimeHeaderEncodedWordSuffix = "?=";
+const mimeHeaderEncodedWordMaxLength = 75;
+const mimeHeaderBase64MaxLength =
+  mimeHeaderEncodedWordMaxLength -
+  mimeHeaderEncodedWordPrefix.length -
+  mimeHeaderEncodedWordSuffix.length;
+const mimeHeaderBase64ChunkMaxLength = Math.floor(mimeHeaderBase64MaxLength / 4) * 4;
 
 type MailboxErrorOperation = "getMailbox" | "getThread" | "send";
 type MailboxDataInput = {
@@ -595,7 +603,7 @@ function createRawMimeMessage(input: {
 }) {
   const headers = [
     `To: ${input.to}`,
-    `Subject: ${input.subject}`,
+    `Subject: ${encodeMimeHeaderValue(input.subject)}`,
     "Content-Type: text/plain; charset=UTF-8",
     "MIME-Version: 1.0",
   ];
@@ -605,6 +613,62 @@ function createRawMimeMessage(input: {
   }
 
   return Buffer.from(`${headers.join("\r\n")}\r\n\r\n${input.body}`).toString("base64url");
+}
+
+function encodeMimeHeaderValue(value: string) {
+  if (/^[\x20-\x7E]*$/u.test(value)) {
+    return value;
+  }
+
+  const encodedWords: string[] = [];
+  let chunkCodePoints: string[] = [];
+
+  for (const codePoint of value) {
+    const nextChunkCodePoints = [...chunkCodePoints, codePoint];
+    const nextChunkBytes = getUtf8Bytes(nextChunkCodePoints);
+
+    if (Buffer.from(nextChunkBytes).toString("base64").length <= mimeHeaderBase64ChunkMaxLength) {
+      chunkCodePoints = nextChunkCodePoints;
+      continue;
+    }
+
+    const chunk = getMimeHeaderBase64SafeChunk(chunkCodePoints);
+    encodedWords.push(createMimeEncodedWord(getUtf8Bytes(chunk.encodedCodePoints)));
+    chunkCodePoints = [...chunk.nextCodePoints, codePoint];
+  }
+
+  if (chunkCodePoints.length > 0) {
+    encodedWords.push(createMimeEncodedWord(getUtf8Bytes(chunkCodePoints)));
+  }
+
+  return encodedWords.join("\r\n ");
+}
+
+function getMimeHeaderBase64SafeChunk(codePoints: readonly string[]) {
+  for (let endIndex = codePoints.length; endIndex > 0; endIndex -= 1) {
+    const encodedCodePoints = codePoints.slice(0, endIndex);
+    if (getUtf8Bytes(encodedCodePoints).length % 3 !== 0) {
+      continue;
+    }
+
+    return {
+      encodedCodePoints,
+      nextCodePoints: codePoints.slice(endIndex),
+    };
+  }
+
+  return {
+    encodedCodePoints: codePoints,
+    nextCodePoints: [],
+  };
+}
+
+function getUtf8Bytes(codePoints: readonly string[]) {
+  return [...Buffer.from(codePoints.join(""), "utf8")];
+}
+
+function createMimeEncodedWord(bytes: readonly number[]) {
+  return `${mimeHeaderEncodedWordPrefix}${Buffer.from(bytes).toString("base64")}${mimeHeaderEncodedWordSuffix}`;
 }
 
 function getMailboxLabel(email: string) {

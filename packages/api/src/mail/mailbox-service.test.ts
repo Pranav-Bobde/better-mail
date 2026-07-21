@@ -213,6 +213,70 @@ test("sends Gmail with the Better Auth Google access token", async () => {
   assert.equal(sendRequest.headers.get("authorization"), "Bearer better-auth-access-token");
 });
 
+test("sends ASCII subjects without changing the raw MIME header value", async () => {
+  const rawMimeMessage = await sendMessageAndGetRawMimeMessage({
+    body: "Body stays literal",
+    subject: "Weekly sync notes",
+    to: "receiver@example.com",
+  });
+
+  assert.match(rawMimeMessage, /Subject: Weekly sync notes\r\n/);
+  assert.equal(rawMimeMessage.includes("=?UTF-8?B?"), false);
+});
+
+test("sends emoji subjects as RFC 2047 encoded words", async () => {
+  const subject = "Re: 😸 OpenAI goes hard";
+  const rawMimeMessage = await sendMessageAndGetRawMimeMessage({
+    body: "Body stays literal",
+    subject,
+    to: "receiver@example.com",
+  });
+
+  assert.match(rawMimeMessage, /Subject: =\?UTF-8\?B\?/);
+  assert.equal(decodeMimeSubjectHeader(rawMimeMessage), subject);
+});
+
+test("sends Devanagari subjects as RFC 2047 encoded words", async () => {
+  const subject = "नमस्ते दुनिया परीक्षण विषय";
+  const rawMimeMessage = await sendMessageAndGetRawMimeMessage({
+    body: "Body stays literal",
+    subject,
+    to: "receiver@example.com",
+  });
+
+  assert.match(rawMimeMessage, /Subject: =\?UTF-8\?B\?/);
+  assert.equal(decodeMimeSubjectHeader(rawMimeMessage), subject);
+});
+
+test("folds long encoded subjects without splitting encoded words over 75 chars", async () => {
+  const subject = Array.from({ length: 25 }, (_, index) => `Part ${index} 😸 नमस्ते`).join(" ");
+  const rawMimeMessage = await sendMessageAndGetRawMimeMessage({
+    body: "Body stays literal",
+    subject,
+    to: "receiver@example.com",
+  });
+
+  assert.match(rawMimeMessage, /Subject: =\?UTF-8\?B\?.*\r\n =\?UTF-8\?B\?/);
+  assert.equal(decodeMimeSubjectHeader(rawMimeMessage), subject);
+
+  const encodedWords = getSubjectEncodedWords(rawMimeMessage);
+  assert.ok(encodedWords.length > 1);
+  for (const encodedWord of encodedWords) {
+    assert.ok(encodedWord.length <= 75, `${encodedWord.length}: ${encodedWord}`);
+  }
+});
+
+test("sends body content as untouched raw UTF-8", async () => {
+  const body = "Literal body with emoji 😸 and Devanagari नमस्ते.";
+  const rawMimeMessage = await sendMessageAndGetRawMimeMessage({
+    body,
+    subject: "Re: 😸 OpenAI goes hard",
+    to: "receiver@example.com",
+  });
+
+  assert.match(rawMimeMessage, new RegExp(`\\r\\n\\r\\n${body}$`, "u"));
+});
+
 test("requires the Gmail send scope before sending mail", async () => {
   globalThis.fetch = async () => {
     throw new Error("fetch should not run without Gmail send scope");
@@ -562,6 +626,65 @@ function createAuthorizedMailboxFetchMock(
 
     return createResponse(request);
   };
+}
+
+async function sendMessageAndGetRawMimeMessage(input: {
+  readonly body: string;
+  readonly subject: string;
+  readonly to: string;
+}) {
+  let rawMessage = "";
+
+  globalThis.fetch = async (requestInput, init) => {
+    const request = new Request(requestInput, init);
+    assert.equal(request.url, "https://gmail.googleapis.com/gmail/v1/users/me/messages/send");
+    assert.equal(request.headers.get("authorization"), "Bearer better-auth-access-token");
+
+    const payload = JSON.parse(await request.text());
+    rawMessage = payload.raw;
+
+    return Response.json({
+      id: "sent-message-id",
+      labelIds: ["SENT"],
+      threadId: "sent-thread-id",
+    });
+  };
+
+  await sendMailboxMessage(input, createSignedInGmailContext("better-auth-access-token"));
+
+  return Buffer.from(rawMessage, "base64url").toString("utf8");
+}
+
+function decodeMimeSubjectHeader(rawMimeMessage: string) {
+  const encodedWords = getSubjectEncodedWords(rawMimeMessage);
+  const base64Value = encodedWords
+    .map((encodedWord) => encodedWord.replace(/^=\?UTF-8\?B\?/, "").replace(/\?=$/, ""))
+    .join("");
+
+  return Buffer.from(base64Value, "base64").toString("utf8");
+}
+
+function getSubjectEncodedWords(rawMimeMessage: string) {
+  const subjectHeader = getSubjectHeader(rawMimeMessage);
+  return subjectHeader.match(/=\?UTF-8\?B\?[^?]+\?=/g) ?? [];
+}
+
+function getSubjectHeader(rawMimeMessage: string) {
+  const headerBlock = rawMimeMessage.split("\r\n\r\n")[0] ?? "";
+  const lines = headerBlock.split("\r\n");
+  const subjectIndex = lines.findIndex((line) => line.startsWith("Subject: "));
+  assert.notEqual(subjectIndex, -1);
+
+  const subjectLines = [];
+  for (const line of lines.slice(subjectIndex)) {
+    if (subjectLines.length > 0 && !line.startsWith(" ")) {
+      break;
+    }
+
+    subjectLines.push(line);
+  }
+
+  return subjectLines.join("\r\n").replace(/^Subject: /, "");
 }
 
 function createMailboxReadResponse(request: Request) {
