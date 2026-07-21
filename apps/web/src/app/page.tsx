@@ -1,7 +1,7 @@
 import { auth } from "@code-main/auth";
 import { headers } from "next/headers";
-import { redirect } from "next/navigation";
 
+import { LandingPage } from "@/features/mail/components/landing/landing-page";
 import { MailPage } from "@/features/mail/components/mail-page";
 
 export default async function Home() {
@@ -10,7 +10,7 @@ export default async function Home() {
   });
 
   if (!session) {
-    redirect("/login");
+    return <LandingPage />;
   }
 
   return <MailPage />;

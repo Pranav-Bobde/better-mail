@@ -9,6 +9,11 @@ import { getThreadInputSchema, getThreadOutputSchema } from "../functions/mail/g
 import { runGetThread } from "../functions/mail/getThread/run";
 import { sendMailInputSchema, sendMailOutputSchema } from "../functions/mail/send/constants";
 import { runSendMail } from "../functions/mail/send/run";
+import {
+  waitlistJoinInputSchema,
+  waitlistJoinOutputSchema,
+} from "../functions/waitlist/join/constants";
+import { runJoinWaitlist } from "../functions/waitlist/join/run";
 import { createRpcSuccessFields } from "../observability/rpc/fields";
 import { publicProcedure } from "../index";
 
@@ -41,6 +46,12 @@ export const appRouter = {
       .input(sendMailInputSchema)
       .output(sendMailOutputSchema)
       .handler(({ input, context }) => runSendMail(input, context)),
+  },
+  waitlist: {
+    join: publicProcedure
+      .input(waitlistJoinInputSchema)
+      .output(waitlistJoinOutputSchema)
+      .handler(({ input, context }) => runJoinWaitlist(input, context)),
   },
 };
 export type AppRouterClient = RouterClient<typeof appRouter>;

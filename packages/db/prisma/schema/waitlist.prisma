@@ -1,0 +1,13 @@
+model WaitlistEntry {
+  id             String   @id @default(cuid())
+  email          String
+  normalizedEmail String  @unique
+  status         String   @default("pending")
+  source         String?
+  ipHash         String?
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([ipHash, createdAt])
+  @@map("waitlist_entry")
+}

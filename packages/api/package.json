@@ -23,6 +23,7 @@
     "effect": "catalog:",
     "evlog": "^2.18.1",
     "langsmith": "^0.7.7",
+    "mailchecker": "^6.0.17",
     "next": "catalog:",
     "zod": "catalog:"
   },

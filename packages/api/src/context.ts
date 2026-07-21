@@ -49,12 +49,18 @@ const unauthenticatedContext = {
   session: null,
 } satisfies AuthContext;
 
+function extractRequestIp(req: NextRequest): string | null {
+  const forwarded = req.headers.get("x-forwarded-for");
+  return forwarded ? (forwarded.split(",")[0]?.trim() ?? null) : null;
+}
+
 export async function createContext(
-  _req: NextRequest,
+  req: NextRequest,
   authContext: AuthContext = unauthenticatedContext,
 ) {
   return {
     ...authContext,
+    requestIp: extractRequestIp(req),
   };
 }
 
