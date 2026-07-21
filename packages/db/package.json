@@ -11,9 +11,11 @@
   },
   "scripts": {
     "check-types": "tsc --noEmit",
-    "db:push": "prisma db push",
+    "guard:db": "node scripts/guard-prod-db.mjs",
+    "db:push": "node scripts/guard-prod-db.mjs && prisma db push",
     "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev",
+    "db:migrate": "node scripts/guard-prod-db.mjs && prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
     "postinstall": "prisma generate",
     "db:studio": "prisma studio"
   },

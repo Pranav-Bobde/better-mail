@@ -39,6 +39,24 @@
     - After audit, remove only `fallow-audit-base-cache-*` worktrees.
   - `pnpm run verify`
 
+## Database & environments (Neon)
+
+- Neon is the Postgres host. A Neon CLI (`neonctl`) is available for branch/env
+  management — prefer it (read-first) over ad-hoc SQL.
+- **Prod DB is `neondb @ ep-floral-tree-aokfe9q5-pooler.c-2.ap-southeast-1.aws.neon.tech`
+  (Neon production/`main` branch). NEVER run destructive or schema-changing commands
+  against it** — no `prisma db push`, no `prisma migrate dev`/`reset`, no
+  `DELETE`/`DROP`/`TRUNCATE`, no seeds/backfills. Read-only inspection only.
+- Env segregation (target state):
+  - **dev** = default for local. `.env.local` `DATABASE_URL` → Neon `dev` branch.
+    The prod URL must never live in `.env.local` or any repo file.
+  - **staging** = Neon `staging` branch; `DATABASE_URL` set only in Vercel Preview env.
+  - **prod** = Neon `main` branch; `DATABASE_URL` set only in Vercel Production env.
+  - Non-DB vars may share values across envs for now; DB URLs must be segregated.
+- Schema-change flow: author with `prisma migrate dev` against the **dev** branch →
+  commit the migration → `prisma migrate deploy` runs in CI/Vercel against staging
+  then prod. No manual schema edits on staging/prod.
+
 ## Non-negotiable
 
 1. Always refer to DESIGN.md while making any UI changes.
@@ -51,3 +69,5 @@
 8. Run `pnpm run verify` before final handoff when changes are commit-bound or review-bound.
 9. Always wait for user confirmation before fixing any issue or staging changes.
 10. For reproducible user-reported issues, do not present likely causes until all available/provided evidence sources have been used first, including exact user steps, app behavior, code paths, logs, database/platform state, and browser/devtools evidence where available.
+11. Never run destructive or schema-changing DB commands (`db push`, `migrate dev`/`reset`, `DELETE`/`DROP`/`TRUNCATE`, seeds) against the prod Neon branch. Local dev targets the Neon `dev` branch; migrations reach staging/prod only via `migrate deploy` in CI/Vercel.
+12. Before any DB write or DDL, confirm which Neon branch `DATABASE_URL` points to. If unsure, stop and ask.
