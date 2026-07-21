@@ -15,6 +15,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { useTheme } from "next-themes";
 import * as React from "react";
 import type { ReactNode } from "react";
 
@@ -409,7 +410,9 @@ function SingleMailBody({ mail }: { readonly mail: Mail }) {
         </div>
       </div>
       <Separator />
-      <div className="min-h-0 flex-1">
+      {/* Dark app surface framing a boxed email surface — the email keeps its
+          own (usually light) canvas, the pane around it stays in-theme. */}
+      <div className="min-h-0 flex-1 bg-background p-4">
         <EmailBody mail={mail} />
       </div>
     </>
@@ -507,7 +510,11 @@ function ThreadMessageBody({ mail }: { readonly mail: Mail }) {
   const html = mail.html?.trim();
 
   if (html) {
-    return <ThreadEmailHtmlFrame html={html} />;
+    return (
+      <div className="bg-background p-3">
+        <ThreadEmailHtmlFrame html={html} />
+      </div>
+    );
   }
 
   const bounce = parseBounceNotice(mail.text);
@@ -554,13 +561,15 @@ function ThreadPlainTextBody({ text }: { readonly text: string }) {
 // Thread messages stack in one scroll column, so the HTML frame auto-sizes to
 // its content instead of filling a fixed pane like the single-message view.
 function ThreadEmailHtmlFrame({ html }: { readonly html: string }) {
+  const { resolvedTheme } = useTheme();
+  const isDark = resolvedTheme === "dark";
   const [srcDoc, setSrcDoc] = React.useState("");
   const [height, setHeight] = React.useState(200);
   const frameRef = React.useRef<HTMLIFrameElement>(null);
 
   React.useEffect(() => {
-    setSrcDoc(buildEmailSrcDoc(html));
-  }, [html]);
+    setSrcDoc(buildEmailSrcDoc(html, isDark));
+  }, [html, isDark]);
 
   const syncHeight = React.useCallback(() => {
     const body = frameRef.current?.contentDocument?.body;
@@ -571,7 +580,7 @@ function ThreadEmailHtmlFrame({ html }: { readonly html: string }) {
 
   return (
     <iframe
-      className="w-full bg-white"
+      className="w-full border border-border bg-white"
       onLoad={syncHeight}
       ref={frameRef}
       referrerPolicy="no-referrer"
@@ -736,15 +745,17 @@ function BounceNotice({ bounce }: { readonly bounce: BounceNoticeInfo }) {
 }
 
 function EmailHtmlFrame({ html }: { readonly html: string }) {
+  const { resolvedTheme } = useTheme();
+  const isDark = resolvedTheme === "dark";
   const [srcDoc, setSrcDoc] = React.useState("");
 
   React.useEffect(() => {
-    setSrcDoc(buildEmailSrcDoc(html));
-  }, [html]);
+    setSrcDoc(buildEmailSrcDoc(html, isDark));
+  }, [html, isDark]);
 
   return (
     <iframe
-      className="size-full bg-white"
+      className="size-full border border-border bg-white"
       // No `allow-scripts`, so no script in the email can ever execute. With
       // scripts disabled, `allow-same-origin` is safe and is required for the
       // srcDoc document to render. Links open in a new tab.
@@ -758,6 +769,10 @@ function EmailHtmlFrame({ html }: { readonly html: string }) {
 
 const emailBaseStyles = `
   html, body { margin: 0; padding: 0; }
+  /* Explicit white floor on the root canvas so forwarding color-scheme: dark
+     can't paint the area behind a short email dark. Senders with their own
+     dark variant still override body/wrapper backgrounds themselves. */
+  html { background: #ffffff; }
   body {
     padding: 16px;
     background: #ffffff;
@@ -773,11 +788,18 @@ const emailBaseStyles = `
   table { max-width: 100%; }
 `;
 
-function buildEmailSrcDoc(html: string) {
+function buildEmailSrcDoc(html: string, isDark: boolean) {
   const clean = DOMPurify.sanitize(html, {
     ADD_ATTR: ["target"],
     FORBID_TAGS: ["script", "object", "embed", "form", "iframe"],
   });
 
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><base target="_blank"><style>${emailBaseStyles}</style></head><body>${clean}</body></html>`;
+  // In dark mode, advertise color-scheme so senders that ship a
+  // prefers-color-scheme: dark variant render their own dark version. Our
+  // light body default stays as a readability floor; a sender's dark rules
+  // load after emailBaseStyles and override it only when they exist.
+  const colorSchemeMeta = isDark ? `<meta name="color-scheme" content="dark light">` : "";
+  const colorSchemeRule = isDark ? ":root { color-scheme: dark light; }" : "";
+
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${colorSchemeMeta}<base target="_blank"><style>${colorSchemeRule}${emailBaseStyles}</style></head><body>${clean}</body></html>`;
 }
