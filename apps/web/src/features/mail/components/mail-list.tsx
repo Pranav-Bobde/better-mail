@@ -5,7 +5,11 @@ import { ScrollArea } from "@code-main/ui/components/scroll-area";
 import { cn } from "@code-main/ui/lib/utils";
 
 import type { Mail } from "@/features/mail/components/mail-data";
-import { cleanMailPreviewText } from "@/features/mail/components/mail-text";
+import {
+  cleanMailPreviewText,
+  getBaseSubject,
+  repairMojibakeText,
+} from "@/features/mail/components/mail-text";
 
 export function MailList({
   items,
@@ -86,7 +90,9 @@ function MailListItemHeader({
           {formatDistanceToNow(new Date(item.date), { addSuffix: true })}
         </div>
       </div>
-      <div className="line-clamp-1 w-full break-words text-xs font-medium">{item.subject}</div>
+      <div className="line-clamp-1 w-full break-words text-xs font-medium">
+        {getBaseSubject(repairMojibakeText(item.subject))}
+      </div>
     </div>
   );
 }

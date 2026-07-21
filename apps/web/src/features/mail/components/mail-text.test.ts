@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   getBaseSubject,
+  repairMojibakeText,
   getInitials,
   splitQuotedReply,
 } from "@/features/mail/components/mail-text";
@@ -17,6 +18,19 @@ test("getBaseSubject strips mixed reply and forward prefixes in any order", () =
 
 test("getBaseSubject strips bracketed list tags interleaved with prefixes", () => {
   assert.equal(getBaseSubject("[EXT] RE: FW: Budget"), "Budget");
+});
+
+test("repairMojibakeText restores a double-encoded emoji subject", () => {
+  assert.equal(
+    repairMojibakeText("Re: Re: Ã°ÂŸÂ˜Â¸ OpenAI goes hard"),
+    "Re: Re: 😸 OpenAI goes hard",
+  );
+});
+
+test("repairMojibakeText leaves clean text and legit accents untouched", () => {
+  assert.equal(repairMojibakeText("😸 OpenAI goes hard"), "😸 OpenAI goes hard");
+  assert.equal(repairMojibakeText("À bientôt — café"), "À bientôt — café");
+  assert.equal(repairMojibakeText("plain ascii"), "plain ascii");
 });
 
 test("getBaseSubject keeps a standalone bracketed tag that is part of the subject", () => {

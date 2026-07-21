@@ -41,6 +41,7 @@ import {
   cleanMailPreviewText,
   getBaseSubject,
   getInitials,
+  repairMojibakeText,
   splitQuotedReply,
 } from "@/features/mail/components/mail-text";
 
@@ -397,7 +398,7 @@ function SingleMailBody({ mail }: { readonly mail: Mail }) {
           </Avatar>
           <div className="grid gap-1">
             <div className="font-semibold">{mail.name}</div>
-            <div className="line-clamp-1 text-xs">{mail.subject}</div>
+            <div className="line-clamp-1 text-xs">{repairMojibakeText(mail.subject)}</div>
             <div className="line-clamp-1 text-xs">
               <span className="font-medium">Reply-To:</span> {mail.email}
             </div>
@@ -423,13 +424,14 @@ function MailThread({
   readonly selectedId: string;
 }) {
   const latestMessage = messages.at(-1);
+  // Gmail titles a conversation with its FIRST message's subject — later
+  // replies only accumulate prefixes (and, for pre-fix sends, mojibake).
+  const threadSubject = getBaseSubject(repairMojibakeText(messages[0]?.subject ?? ""));
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="flex items-center gap-2 px-4 pt-4 pb-2">
-        <h2 className="line-clamp-1 text-sm font-semibold">
-          {getBaseSubject(latestMessage?.subject ?? "")}
-        </h2>
+        <h2 className="line-clamp-1 text-sm font-semibold">{threadSubject}</h2>
         <span className="shrink-0 text-xs text-muted-foreground">{messages.length} messages</span>
       </div>
       <div className="flex flex-col gap-2 p-4 pt-0">
