@@ -8,6 +8,7 @@ import {
   ExternalLink,
   Forward,
   MailX,
+  MoreHorizontal,
   MoreVertical,
   Reply,
   ReplyAll,
@@ -36,7 +37,12 @@ import { cn } from "@code-main/ui/lib/utils";
 
 import type { ComposeState } from "@/features/mail/components/mail-ai-tools";
 import type { Mail } from "@/features/mail/components/mail-data";
-import { cleanMailPreviewText } from "@/features/mail/components/mail-text";
+import {
+  cleanMailPreviewText,
+  getBaseSubject,
+  getInitials,
+  splitQuotedReply,
+} from "@/features/mail/components/mail-text";
 
 export function MailDisplay({
   compose,
@@ -421,7 +427,9 @@ function MailThread({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="flex items-center gap-2 px-4 pt-4 pb-2">
-        <h2 className="line-clamp-1 text-sm font-semibold">{latestMessage?.subject}</h2>
+        <h2 className="line-clamp-1 text-sm font-semibold">
+          {getBaseSubject(latestMessage?.subject ?? "")}
+        </h2>
         <span className="shrink-0 text-xs text-muted-foreground">{messages.length} messages</span>
       </div>
       <div className="flex flex-col gap-2 p-4 pt-0">
@@ -506,7 +514,39 @@ function ThreadMessageBody({ mail }: { readonly mail: Mail }) {
     return <BounceNotice bounce={bounce} />;
   }
 
-  return <div className="p-4 text-sm whitespace-pre-wrap">{mail.text}</div>;
+  return <ThreadPlainTextBody text={mail.text} />;
+}
+
+// Plain-text replies carry the quoted history inline. Show the fresh reply and
+// tuck the quote behind a quiet Gmail-style "•••" toggle so long threads stay
+// readable without hiding anything the reader might want.
+function ThreadPlainTextBody({ text }: { readonly text: string }) {
+  const { quoted, visible } = splitQuotedReply(text);
+  const [showQuoted, setShowQuoted] = React.useState(false);
+
+  return (
+    <div className="p-4 text-sm">
+      <div className="whitespace-pre-wrap">{visible}</div>
+      {quoted ? (
+        <div className="mt-2">
+          <button
+            aria-expanded={showQuoted}
+            aria-label={showQuoted ? "Hide quoted text" : "Show quoted text"}
+            className="inline-flex h-5 items-center rounded bg-muted px-1.5 text-muted-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            onClick={() => setShowQuoted((value) => !value)}
+            type="button"
+          >
+            <MoreHorizontal className="size-4" />
+          </button>
+          {showQuoted ? (
+            <div className="mt-2 border-l-2 pl-3 whitespace-pre-wrap text-muted-foreground">
+              {quoted}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 // Thread messages stack in one scroll column, so the HTML frame auto-sizes to
@@ -539,13 +579,6 @@ function ThreadEmailHtmlFrame({ html }: { readonly html: string }) {
       title="Email content"
     />
   );
-}
-
-function getInitials(name: string) {
-  return name
-    .split(" ")
-    .map((chunk) => chunk[0])
-    .join("");
 }
 
 function getThreadPreview(mail: Mail) {
