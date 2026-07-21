@@ -14,26 +14,42 @@ export function cleanMailPreviewText(raw: string) {
 }
 
 // A conversation subject accumulates reply/forward prefixes (Re:, Fwd:, Fw:)
-// and bracketed list tags like [EXT] as the thread grows. Match one such
-// leading token so the whole run can be stripped to Gmail's clean base subject.
-const replyPrefixPattern = /^(?:\[[^\]]*\]|(?:re|fwd|fw)(?:\[\d+\])?\s*:)\s*/i;
+// as the thread grows, sometimes interleaved with bracketed list tags like
+// [EXT]. Strip the whole leading run down to Gmail's clean base subject.
+const replyTokenPattern = /^(?:re|fwd|fw)(?:\[\d+\])?\s*:\s*/i;
+const bracketTagPattern = /^\[[^\]]*\]\s*/;
 
 export function getBaseSubject(subject: string) {
   let base = subject.trim();
 
-  while (replyPrefixPattern.test(base)) {
-    const stripped = base.replace(replyPrefixPattern, "").trim();
-
-    // Stop before stripping the subject down to nothing — a prefix-only subject
-    // like "Re: Re:" keeps its last prefix instead of vanishing from the header.
-    if (stripped.length === 0) {
-      break;
-    }
-
-    base = stripped;
+  for (let next = stripReplyNoise(base); next !== null; next = stripReplyNoise(base)) {
+    base = next;
   }
 
   return base;
+}
+
+// One stripping step: a reply token, or a bracketed tag directly followed by a
+// reply token (e.g. "[EXT] Re: x"). Returns null when nothing more should
+// strip.
+function stripReplyNoise(base: string) {
+  return stripReplyToken(base) ?? stripTaggedReplyToken(base);
+}
+
+// Never empties a prefix-only subject like "Re: Re:" — it keeps its last prefix.
+function stripReplyToken(base: string) {
+  if (!replyTokenPattern.test(base)) {
+    return null;
+  }
+
+  const stripped = base.replace(replyTokenPattern, "").trim();
+  return stripped.length === 0 ? null : stripped;
+}
+
+// A standalone tag like "[JIRA-123]" is part of the real subject and stays.
+function stripTaggedReplyToken(base: string) {
+  const withoutTag = base.replace(bracketTagPattern, "").trim();
+  return withoutTag !== base && replyTokenPattern.test(withoutTag) ? withoutTag : null;
 }
 
 // Avatar fallbacks show at most two initials, Gmail-style: the first letter of

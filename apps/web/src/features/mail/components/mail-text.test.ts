@@ -19,6 +19,11 @@ test("getBaseSubject strips bracketed list tags interleaved with prefixes", () =
   assert.equal(getBaseSubject("[EXT] RE: FW: Budget"), "Budget");
 });
 
+test("getBaseSubject keeps a standalone bracketed tag that is part of the subject", () => {
+  assert.equal(getBaseSubject("[JIRA-123] Fix login"), "[JIRA-123] Fix login");
+  assert.equal(getBaseSubject("Re: [JIRA-123] Fix login"), "[JIRA-123] Fix login");
+});
+
 test("getBaseSubject leaves a prefix-free subject untouched", () => {
   assert.equal(getBaseSubject("Meeting Tomorrow"), "Meeting Tomorrow");
 });
