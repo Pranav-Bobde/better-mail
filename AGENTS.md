@@ -54,8 +54,24 @@
   - **prod** = Neon `main` branch; `DATABASE_URL` set only in Vercel Production env.
   - Non-DB vars may share values across envs for now; DB URLs must be segregated.
 - Schema-change flow: author with `prisma migrate dev` against the **dev** branch →
-  commit the migration → `prisma migrate deploy` runs in CI/Vercel against staging
-  then prod. No manual schema edits on staging/prod.
+  commit the migration → apply to staging/prod with `prisma migrate deploy`. NOTE:
+  Vercel's build is `pnpm build` only — it does **not** run migrations. So `migrate
+  deploy` is currently a **manual** step against the staging/prod Neon branch (target
+  it explicitly; the default `prisma.config.ts` loads `.env.local`/dev, so use a
+  process-env `DATABASE_URL` or a no-dotenv config). No manual schema edits on staging/prod.
+
+## E2E / computer-use testing
+
+- For real end-to-end verification that needs a live UI (browser / computer-use, e.g.
+  Codex), you MAY use the user's own Gmail accounts **`bobdep31@gmail.com`** and
+  **`nearl0407@gmail.com`** for testing. Use them to exercise real flows and to **create
+  test scenarios that don't already exist** — e.g. send between the two accounts to build
+  a multi-message thread, generate unread/labelled mail, etc.
+- Sending between these two accounts to set up a test is allowed. Never act on other
+  people's real mail, and avoid destructive actions (delete/archive/spam/label changes)
+  on anything the user actually cares about — prefer created test messages.
+- Staging/prod e2e recipe (stable alias, session handling, synthetic Pub/Sub webhook,
+  Neon SQL probes): follow the established recipe from prior runs.
 
 ## Non-negotiable
 
