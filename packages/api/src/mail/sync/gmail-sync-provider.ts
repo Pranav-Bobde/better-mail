@@ -26,7 +26,6 @@ export function createGmailSyncProvider(topicName = env.GMAIL_PUBSUB_TOPIC_NAME)
     watchMailbox: (accessToken: string) =>
       watchGmailMailbox({
         accessToken,
-        labelIds: ["INBOX"],
         topicName,
         userId: gmailUserId,
       }),

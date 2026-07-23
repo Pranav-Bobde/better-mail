@@ -20,6 +20,10 @@ export function MailList({
   readonly selected: string | null;
   readonly onSelect: (id: string) => void;
 }) {
+  if (items.length === 0) {
+    return <MailListEmptyState />;
+  }
+
   return (
     <ScrollArea className="h-full">
       <div className="flex flex-col gap-2 p-4 pt-0">
@@ -33,6 +37,14 @@ export function MailList({
         ))}
       </div>
     </ScrollArea>
+  );
+}
+
+function MailListEmptyState() {
+  return (
+    <div className="flex h-full items-center justify-center p-6">
+      <p className="text-sm text-muted-foreground">No messages here</p>
+    </div>
   );
 }
 

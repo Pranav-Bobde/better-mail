@@ -7,6 +7,7 @@ const { createMailboxQueryOptions } = mailboxQueryOptionsModule;
 
 test("mailbox query options do not poll getMailbox", () => {
   const options = createMailboxQueryOptions({
+    folder: "inbox",
     searchQuery: "",
     view: "all",
   });

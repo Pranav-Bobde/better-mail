@@ -1,8 +1,21 @@
 import { z } from "zod";
 
 const mailViewSchema = z.enum(["all", "unread"]);
+export const mailFolderSchema = z.enum([
+  "inbox",
+  "drafts",
+  "sent",
+  "junk",
+  "trash",
+  "archive",
+  "social",
+  "updates",
+  "forums",
+  "promotions",
+]);
 
 export const getMailboxInputSchema = z.object({
+  folder: mailFolderSchema.default("inbox"),
   query: z.string().max(500),
   view: mailViewSchema,
 });
@@ -90,4 +103,5 @@ export const getThreadOutputSchema = z.discriminatedUnion("status", [
 
 export type MailMessage = z.infer<typeof mailMessageSchema>;
 export type MailboxData = z.infer<typeof mailboxDataSchema>;
+export type MailFolder = z.infer<typeof mailFolderSchema>;
 export type GetThreadOutput = z.infer<typeof getThreadOutputSchema>;

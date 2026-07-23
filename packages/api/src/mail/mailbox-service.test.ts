@@ -72,6 +72,53 @@ test("fetches Gmail mailbox with the Better Auth Google access token", async () 
   assert.ok(mutableRequests.length > 0);
 });
 
+async function fetchMailboxThreadsListUrl(input: Parameters<typeof getMailboxData>[0]) {
+  const mutableRequests: Request[] = [];
+  globalThis.fetch = createMailboxReadFetchMock(mutableRequests);
+
+  const result = await getMailboxData(
+    input,
+    createSignedInGmailContext("better-auth-read-token", [
+      "email",
+      "profile",
+      "https://www.googleapis.com/auth/gmail.readonly",
+    ]),
+  );
+
+  assert.equal(result.status, "ok");
+  const threadsRequest = mutableRequests.find(
+    (request) => new URL(request.url).pathname === "/gmail/v1/users/me/threads",
+  );
+  assert.ok(threadsRequest);
+  return new URL(threadsRequest.url);
+}
+
+test("lists archived Gmail threads with archive query and no label filter", async () => {
+  const url = await fetchMailboxThreadsListUrl({
+    folder: "archive",
+    query: "from:sender",
+    view: "unread",
+  });
+
+  assert.equal(url.searchParams.get("includeSpamTrash"), "false");
+  assert.equal(
+    url.searchParams.get("q"),
+    "from:sender -in:inbox -in:trash -in:spam -in:draft is:unread",
+  );
+  assert.deepEqual(url.searchParams.getAll("labelIds"), []);
+});
+
+test("lists junk Gmail threads with spam label and includeSpamTrash enabled", async () => {
+  const url = await fetchMailboxThreadsListUrl({
+    folder: "junk",
+    query: "",
+    view: "all",
+  });
+
+  assert.equal(url.searchParams.get("includeSpamTrash"), "true");
+  assert.deepEqual(url.searchParams.getAll("labelIds"), ["SPAM"]);
+});
+
 test("MailboxService fetches mailbox data through the injected GmailClient service", async () => {
   globalThis.fetch = async () => {
     throw new Error("fetch should not run when GmailClient is injected");
@@ -885,26 +932,42 @@ function createThreadedMailboxThreadsResponse(url: URL) {
 }
 
 function createMailboxThreadsResponse(url: URL) {
-  assert.equal(url.searchParams.get("includeSpamTrash"), "false");
   const query = url.searchParams.get("q");
+  assert.equal(url.searchParams.get("maxResults"), "20");
 
   if (query === "from:sender is:unread") {
-    const message = createHtmlGmailMessage();
-    assert.equal(url.searchParams.get("maxResults"), "20");
+    assert.equal(url.searchParams.get("includeSpamTrash"), "false");
     assert.deepEqual(url.searchParams.getAll("labelIds"), ["INBOX", "UNREAD"]);
-    return Response.json({
-      resultSizeEstimate: 1,
-      threads: [
-        {
-          historyId: message.historyId,
-          id: message.threadId,
-          snippet: message.snippet,
-        },
-      ],
-    });
+    return createSingleThreadListResponse();
+  }
+
+  if (query === "from:sender -in:inbox -in:trash -in:spam -in:draft is:unread") {
+    assert.equal(url.searchParams.get("includeSpamTrash"), "false");
+    assert.deepEqual(url.searchParams.getAll("labelIds"), []);
+    return createSingleThreadListResponse();
+  }
+
+  if (!query && url.searchParams.get("includeSpamTrash") === "true") {
+    assert.deepEqual(url.searchParams.getAll("labelIds"), ["SPAM"]);
+    return createSingleThreadListResponse();
   }
 
   throw new Error(`Unexpected Gmail threads.list query: ${url.toString()}`);
+}
+
+function createSingleThreadListResponse() {
+  const message = createHtmlGmailMessage();
+
+  return Response.json({
+    resultSizeEstimate: 1,
+    threads: [
+      {
+        historyId: message.historyId,
+        id: message.threadId,
+        snippet: message.snippet,
+      },
+    ],
+  });
 }
 
 function createGmailLabelCountResponse(labelId: string) {

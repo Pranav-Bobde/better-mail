@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { Suspense } from "react";
 import { z } from "zod";
 
 import { HealthProbe } from "@/features/mail/components/health-probe";
@@ -8,6 +9,7 @@ import {
   defaultMailLayout,
   mailPanelIds,
 } from "@/features/mail/components/mail-layout";
+import { MailLoading } from "@/features/mail/components/mail-loading";
 
 const mailLayoutCookieName = "react-resizable-panels:layout:mail";
 const navCollapsedSize = 4;
@@ -27,11 +29,15 @@ export async function MailPage() {
       <HealthProbe />
       <section className="h-full overflow-hidden bg-background">
         <div className="hidden h-full flex-col md:flex">
-          <Mail
-            defaultCollapsed={defaultCollapsed}
-            defaultLayout={defaultLayout}
-            navCollapsedSize={navCollapsedSize}
-          />
+          {/* Mail reads the ?folder search param via useSearchParams, which
+              requires a Suspense boundary under the App Router. */}
+          <Suspense fallback={<MailLoading />}>
+            <Mail
+              defaultCollapsed={defaultCollapsed}
+              defaultLayout={defaultLayout}
+              navCollapsedSize={navCollapsedSize}
+            />
+          </Suspense>
         </div>
         <div className="p-8 text-sm text-muted-foreground md:hidden">
           Mail example is available on tablet and desktop widths.

@@ -1,6 +1,11 @@
 "use client";
 
-import { type GetThreadOutput, type MailboxData } from "@code-main/api/mail/contracts";
+import {
+  type GetThreadOutput,
+  type MailboxData,
+  type MailFolder,
+  mailFolderSchema,
+} from "@code-main/api/mail/contracts";
 import { formatMailBadgeCount } from "@code-main/api/mail/label-presentation";
 import {
   CopilotChatConfigurationProvider,
@@ -25,6 +30,7 @@ import {
   Trash2,
   Users2,
 } from "lucide-react";
+import { usePathname, useSearchParams, type ReadonlyURLSearchParams } from "next/navigation";
 import * as React from "react";
 import { toast } from "sonner";
 
@@ -172,13 +178,34 @@ function MailWorkspace({
   // replayed setActiveDraft/setIsAiOpen re-opening the panel after a send.
   const handledDraftToolCalls = React.useRef(new Set<string>());
   const layout = createMailLayout(defaultLayout);
+
+  // Folder selection is URL-driven (?folder=sent). The <Link> hrefs below carry
+  // the folder param, so back/forward and cmd-click work; TanStack keys the
+  // mailbox query per folder, so switching just changes the query key.
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const folder = getFolderFromSearchParams(searchParams);
+  const buildFolderHref = React.useCallback(
+    (targetFolder: MailFolder) => {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("folder", targetFolder);
+      const queryString = params.toString();
+      // A UrlObject keeps the href valid under Next's typedRoutes without a cast
+      // while preserving every existing search param verbatim.
+      return { pathname, search: queryString ? `?${queryString}` : "" };
+    },
+    [pathname, searchParams],
+  );
+
+  useFolderChangeReset(folder, () => setSelected(null));
+
   const {
     errorMessage: mailboxErrorMessage,
     isFetching: isMailboxFetching,
     mailbox,
     isInitialLoading: isMailboxInitialLoading,
     refetchMailbox,
-  } = useMailboxData(searchQuery, view);
+  } = useMailboxData(searchQuery, view, folder);
   const sendMailMutation = useSendReplyMutation();
   const mailboxViewState = getMailboxViewState(mailbox, mailboxErrorMessage);
   const activeMails = mailboxViewState.activeMails;
@@ -186,8 +213,14 @@ function MailWorkspace({
   const searchFilteredMails = getSearchFilteredMails(activeMails, clientSearchQuery);
   const visibleMails = getVisibleMails(searchFilteredMails, view);
   const counts = mailboxViewState.counts;
-  const primaryLinks = React.useMemo(() => createPrimaryLinks(counts), [counts]);
-  const categoryLinks = React.useMemo(() => createCategoryLinks(), []);
+  const primaryLinks = React.useMemo(
+    () => createPrimaryLinks(counts, folder, buildFolderHref),
+    [buildFolderHref, counts, folder],
+  );
+  const categoryLinks = React.useMemo(
+    () => createCategoryLinks(folder, buildFolderHref),
+    [buildFolderHref, folder],
+  );
   const selectedMail = getSelectedMail(activeMails, selected);
   const { isLoading: isThreadLoading, messages: threadMessages } = useThreadMessages(selectedMail);
   const openCompose = React.useCallback(() => {
@@ -470,6 +503,7 @@ function MailWorkspace({
         <ResizableHandle withHandle />
         <MailListPanel
           defaultSize={layout[mailPanelIds.list]}
+          folderTitle={getFolderTitle(folder)}
           isAiOpen={isAiOpen}
           isMailboxFetching={isMailboxFetching}
           onOpenCompose={openCompose}
@@ -521,6 +555,7 @@ function MailWorkspace({
 
 function MailListPanel({
   defaultSize,
+  folderTitle,
   isAiOpen,
   isMailboxFetching,
   mailboxErrorMessage,
@@ -538,6 +573,7 @@ function MailListPanel({
   visibleMails,
 }: {
   readonly defaultSize: number | undefined;
+  readonly folderTitle: string;
   readonly isAiOpen: boolean;
   readonly isMailboxFetching: boolean;
   readonly mailboxErrorMessage: string | null;
@@ -562,6 +598,7 @@ function MailListPanel({
         value={view}
       >
         <MailListHeader
+          folderTitle={folderTitle}
           isAiOpen={isAiOpen}
           isMailboxFetching={isMailboxFetching}
           onOpenCompose={onOpenCompose}
@@ -635,12 +672,14 @@ function ReconnectGoogleButton() {
 }
 
 function MailListHeader({
+  folderTitle,
   isAiOpen,
   isMailboxFetching,
   onOpenCompose,
   onRefreshMailbox,
   onToggleAiPanel,
 }: {
+  readonly folderTitle: string;
   readonly isAiOpen: boolean;
   readonly isMailboxFetching: boolean;
   readonly onOpenCompose: () => void;
@@ -649,7 +688,7 @@ function MailListHeader({
 }) {
   return (
     <div className="flex items-center px-4 py-2">
-      <h1 className="text-xl font-bold">Inbox</h1>
+      <h1 className="text-xl font-bold">{folderTitle}</h1>
       <TabsList className="ml-auto">
         <TabsTrigger className="text-zinc-600 dark:text-zinc-200" value="all">
           All mail
@@ -834,9 +873,9 @@ function isUnreadMail(item: MailItem) {
   return !item.read;
 }
 
-function useMailboxData(searchQuery: string, view: MailView) {
+function useMailboxData(searchQuery: string, view: MailView, folder: MailFolder) {
   const mailboxQuery = useQuery(
-    orpc.mail.getMailbox.queryOptions(createMailboxQueryOptions({ searchQuery, view })),
+    orpc.mail.getMailbox.queryOptions(createMailboxQueryOptions({ folder, searchQuery, view })),
   );
 
   const mailbox = mailboxQuery.data?.status === "ok" ? mailboxQuery.data.data : null;
@@ -1020,34 +1059,133 @@ function getSelectedMail(activeMails: readonly MailItem[], selected: string | nu
   return activeMails.find((item) => item.id === selected) ?? null;
 }
 
-function createPrimaryLinks(counts: MailboxCounts) {
+function createPrimaryLinks(
+  counts: MailboxCounts,
+  activeFolder: MailFolder,
+  buildFolderHref: (folder: MailFolder) => NavLink["href"],
+) {
   return [
     {
       title: "Inbox",
       label: formatMailBadgeCount(counts.inboxUnread, { cap: 99 }) ?? undefined,
       icon: Inbox,
-      variant: "default",
+      folder: "inbox",
+      href: buildFolderHref("inbox"),
+      variant: navVariant("inbox", activeFolder),
     },
     {
       title: "Drafts",
       label: formatMailBadgeCount(counts.drafts) ?? undefined,
       icon: File,
-      variant: "ghost",
+      folder: "drafts",
+      href: buildFolderHref("drafts"),
+      variant: navVariant("drafts", activeFolder),
     },
-    { title: "Sent", icon: Send, variant: "ghost" },
-    { title: "Junk", icon: ArchiveX, variant: "ghost" },
-    { title: "Trash", icon: Trash2, variant: "ghost" },
-    { title: "Archive", icon: Archive, variant: "ghost" },
+    {
+      title: "Sent",
+      icon: Send,
+      folder: "sent",
+      href: buildFolderHref("sent"),
+      variant: navVariant("sent", activeFolder),
+    },
+    {
+      title: "Junk",
+      icon: ArchiveX,
+      folder: "junk",
+      href: buildFolderHref("junk"),
+      variant: navVariant("junk", activeFolder),
+    },
+    {
+      title: "Trash",
+      icon: Trash2,
+      folder: "trash",
+      href: buildFolderHref("trash"),
+      variant: navVariant("trash", activeFolder),
+    },
+    {
+      title: "Archive",
+      icon: Archive,
+      folder: "archive",
+      href: buildFolderHref("archive"),
+      variant: navVariant("archive", activeFolder),
+    },
   ] satisfies readonly NavLink[];
 }
 
-function createCategoryLinks() {
+function createCategoryLinks(
+  activeFolder: MailFolder,
+  buildFolderHref: (folder: MailFolder) => NavLink["href"],
+) {
   return [
-    { title: "Social", icon: Users2, variant: "ghost" },
-    { title: "Updates", icon: AlertCircle, variant: "ghost" },
-    { title: "Forums", icon: MessagesSquare, variant: "ghost" },
-    { title: "Promotions", icon: Archive, variant: "ghost" },
+    {
+      title: "Social",
+      icon: Users2,
+      folder: "social",
+      href: buildFolderHref("social"),
+      variant: navVariant("social", activeFolder),
+    },
+    {
+      title: "Updates",
+      icon: AlertCircle,
+      folder: "updates",
+      href: buildFolderHref("updates"),
+      variant: navVariant("updates", activeFolder),
+    },
+    {
+      title: "Forums",
+      icon: MessagesSquare,
+      folder: "forums",
+      href: buildFolderHref("forums"),
+      variant: navVariant("forums", activeFolder),
+    },
+    {
+      title: "Promotions",
+      icon: Archive,
+      folder: "promotions",
+      href: buildFolderHref("promotions"),
+      variant: navVariant("promotions", activeFolder),
+    },
   ] satisfies readonly NavLink[];
+}
+
+// Drops stale state the moment the folder changes so the reading pane never
+// shows a thread from the folder we just left. Deriving during render (no
+// effect) avoids an extra refetch pass; the query key change drives the load.
+function useFolderChangeReset(folder: MailFolder, onFolderChange: () => void) {
+  const [previousFolder, setPreviousFolder] = React.useState(folder);
+
+  if (folder !== previousFolder) {
+    setPreviousFolder(folder);
+    onFolderChange();
+  }
+}
+
+function navVariant(folder: MailFolder, activeFolder: MailFolder) {
+  return folder === activeFolder ? ("default" as const) : ("ghost" as const);
+}
+
+const defaultFolder = "inbox" satisfies MailFolder;
+
+function getFolderFromSearchParams(searchParams: ReadonlyURLSearchParams) {
+  const parsed = mailFolderSchema.safeParse(searchParams.get("folder"));
+  return parsed.success ? parsed.data : defaultFolder;
+}
+
+const folderTitles = {
+  archive: "Archive",
+  drafts: "Drafts",
+  forums: "Forums",
+  inbox: "Inbox",
+  junk: "Junk",
+  promotions: "Promotions",
+  sent: "Sent",
+  social: "Social",
+  trash: "Trash",
+  updates: "Updates",
+} satisfies Record<MailFolder, string>;
+
+function getFolderTitle(folder: MailFolder) {
+  return folderTitles[folder];
 }
 
 function toMailView(value: string): MailView {

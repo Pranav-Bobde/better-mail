@@ -3,6 +3,7 @@
 import type { LucideIcon } from "lucide-react";
 import Link from "next/link";
 
+import type { MailFolder } from "@code-main/api/mail/contracts";
 import { buttonVariants } from "@code-main/ui/components/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@code-main/ui/components/tooltip";
 import { cn } from "@code-main/ui/lib/utils";
@@ -11,6 +12,11 @@ export type NavLink = {
   readonly title: string;
   readonly label?: string;
   readonly icon: LucideIcon;
+  // Mailbox folder this row targets, and the URL that selects it (other search
+  // params preserved). Active/inactive styling is precomputed into `variant`.
+  // href is typed from Link so it satisfies Next's typedRoutes contract.
+  readonly folder: MailFolder;
+  readonly href: React.ComponentProps<typeof Link>["href"];
   readonly variant: "default" | "ghost";
 };
 
@@ -60,7 +66,7 @@ function CollapsedNavItem({ link }: { readonly link: NavLink }) {
               "size-9",
               getCollapsedActiveClass(link.variant),
             )}
-            href="#"
+            href={link.href}
           />
         }
       >
@@ -89,7 +95,7 @@ function ExpandedNavItem({ link }: { readonly link: NavLink }) {
         getExpandedActiveClass(link.variant),
         "justify-start",
       )}
-      href="#"
+      href={link.href}
     >
       <link.icon className="mr-2 size-4" />
       {link.title}

@@ -45,19 +45,34 @@ import { BrowserFrame } from "@/features/mail/components/landing/landing-kit";
 
 const ACCENT = "#3b82f6";
 
+// Static landing hero: the rows are decorative, so they stay inert (href "#").
 const primaryLinks: readonly NavLink[] = [
-  { title: "Inbox", label: "12", icon: Inbox, variant: "default" },
-  { title: "Drafts", label: "4", icon: File, variant: "ghost" },
-  { title: "Sent", label: "", icon: Send, variant: "ghost" },
-  { title: "Junk", label: "23", icon: ArchiveX, variant: "ghost" },
-  { title: "Trash", label: "", icon: Trash2, variant: "ghost" },
-  { title: "Archive", label: "", icon: Archive, variant: "ghost" },
+  { title: "Inbox", label: "12", icon: Inbox, folder: "inbox", href: "#", variant: "default" },
+  { title: "Drafts", label: "4", icon: File, folder: "drafts", href: "#", variant: "ghost" },
+  { title: "Sent", label: "", icon: Send, folder: "sent", href: "#", variant: "ghost" },
+  { title: "Junk", label: "23", icon: ArchiveX, folder: "junk", href: "#", variant: "ghost" },
+  { title: "Trash", label: "", icon: Trash2, folder: "trash", href: "#", variant: "ghost" },
+  { title: "Archive", label: "", icon: Archive, folder: "archive", href: "#", variant: "ghost" },
 ];
 
 const categoryLinks: readonly NavLink[] = [
-  { title: "Social", label: "972", icon: Users2, variant: "ghost" },
-  { title: "Forums", label: "128", icon: MessagesSquare, variant: "ghost" },
-  { title: "Shopping", label: "8", icon: ShoppingCart, variant: "ghost" },
+  { title: "Social", label: "972", icon: Users2, folder: "social", href: "#", variant: "ghost" },
+  {
+    title: "Forums",
+    label: "128",
+    icon: MessagesSquare,
+    folder: "forums",
+    href: "#",
+    variant: "ghost",
+  },
+  {
+    title: "Shopping",
+    label: "8",
+    icon: ShoppingCart,
+    folder: "promotions",
+    href: "#",
+    variant: "ghost",
+  },
 ];
 
 type DemoMail = {

@@ -3,8 +3,9 @@ import { EvlogError } from "evlog";
 
 import { isEvlogError, runPromiseRaw, tryPromiseExpecting } from "../effect-interop";
 import type { AuthContext } from "../context";
-import type { MailboxData, MailMessage } from "./contracts";
+import type { MailboxData, MailFolder, MailMessage } from "./contracts";
 import { mailErrors } from "./errors";
+import { getGmailFolderListParams } from "./folder-mapping";
 import {
   GmailClient,
   getGmailLabel,
@@ -40,6 +41,7 @@ const mimeHeaderBase64ChunkMaxLength = Math.floor(mimeHeaderBase64MaxLength / 4)
 
 type MailboxErrorOperation = "getMailbox" | "getThread" | "send";
 type MailboxDataInput = {
+  readonly folder?: MailFolder;
   readonly query: string;
   readonly view: "all" | "unread";
 };
@@ -157,6 +159,10 @@ async function getMailboxDataWithGmail(
   authContext: AuthContext,
   gmail: MailboxGmailRequests,
 ) {
+  const mailboxInput = {
+    ...input,
+    folder: input.folder ?? "inbox",
+  };
   const credentials = await getGmailCredentials(authContext, [gmailReadonlyScope]);
   // Best-effort counts never reject, so the fetch can safely overlap the cache read.
   const countsPromise = getMailboxCountsBestEffort(
@@ -165,7 +171,7 @@ async function getMailboxDataWithGmail(
     authContext,
     gmail,
   );
-  const cachedMailboxData = await getCachedMailboxData(input, authContext);
+  const cachedMailboxData = await getCachedMailboxData(mailboxInput, authContext);
 
   if (cachedMailboxData) {
     await enqueueMailboxSyncIfAvailable(authContext, {
@@ -183,7 +189,7 @@ async function getMailboxDataWithGmail(
   }
 
   const mailboxBaseData = await getMailboxBaseData(
-    input,
+    mailboxInput,
     credentials.accessToken,
     await countsPromise,
     gmail,
@@ -201,6 +207,7 @@ async function getMailboxDataWithGmail(
 
 async function getCachedMailboxData(
   input: {
+    readonly folder: MailFolder;
     readonly query: string;
     readonly view: "all" | "unread";
   },
@@ -213,6 +220,7 @@ async function getCachedMailboxData(
   await authContext.mailSyncRepository.markGmailMailboxActivity(authContext.session.user.id);
 
   const cachedMailbox = await authContext.mailSyncRepository.getCachedMailboxData({
+    folder: input.folder,
     query: input.query,
     userId: authContext.session.user.id,
     view: input.view,
@@ -229,17 +237,19 @@ async function getCachedMailboxData(
 }
 
 async function getMailboxBaseData(
-  input: { readonly query: string; readonly view: "all" | "unread" },
+  input: { readonly folder: MailFolder; readonly query: string; readonly view: "all" | "unread" },
   accessToken: string,
   counts: MailboxData["counts"],
   gmail: MailboxGmailRequests,
 ) {
+  const folderListParams = getGmailFolderListParams(input.folder);
   const [profile, gmailLabels, listResponse] = await Promise.all([
     gmail.getProfile(accessToken, gmailUserId),
     gmail.listLabels(accessToken, gmailUserId),
     gmail.listThreads({
       accessToken,
-      labelIds: getListLabelIds(input.view),
+      ...(folderListParams.includeSpamTrash ? { includeSpamTrash: true } : {}),
+      labelIds: getListLabelIds(input.view, input.folder),
       maxResults: mailboxMaxResults,
       query: getMailboxQuery(input),
       userId: gmailUserId,
@@ -567,19 +577,30 @@ function isThreadRead(messages: GmailThread["messages"]) {
   return messages.every((message) => !(message.labelIds ?? []).includes("UNREAD"));
 }
 
-function getListLabelIds(view: "all" | "unread") {
+function getListLabelIds(view: "all" | "unread", folder: MailFolder) {
+  const folderLabelIds = getGmailFolderListParams(folder).labelIds;
+
   switch (view) {
     case "all":
-      return ["INBOX"];
+      return folderLabelIds;
     case "unread":
-      return ["INBOX", "UNREAD"];
+      return folderLabelIds.length > 0 ? [...folderLabelIds, "UNREAD"] : folderLabelIds;
     default:
       return view satisfies never;
   }
 }
 
-function getMailboxQuery(input: { readonly query: string; readonly view: "all" | "unread" }) {
+function getMailboxQuery(input: {
+  readonly folder: MailFolder;
+  readonly query: string;
+  readonly view: "all" | "unread";
+}) {
+  const folderListParams = getGmailFolderListParams(input.folder);
   const parts = [input.query.trim()];
+
+  if (folderListParams.extraQuery) {
+    parts.push(folderListParams.extraQuery);
+  }
 
   if (input.view === "unread") {
     parts.push("is:unread");

@@ -1,15 +1,18 @@
 import { keepPreviousData } from "@tanstack/react-query";
 
+import type { MailFolder } from "@code-main/api/mail/contracts";
 import { mailboxChangedEventSchema } from "@code-main/api/mail/realtime/contracts";
 
 import type { MailView } from "@/features/mail/components/mail-ai-tools";
 
 export function createMailboxQueryOptions(input: {
+  readonly folder: MailFolder;
   readonly searchQuery: string;
   readonly view: MailView;
 }) {
   return {
     input: {
+      folder: input.folder,
       query: input.searchQuery,
       view: input.view,
     },

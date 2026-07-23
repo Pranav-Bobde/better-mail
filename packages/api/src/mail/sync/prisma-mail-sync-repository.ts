@@ -10,7 +10,8 @@ import { Context, Effect, Layer } from "effect";
 import type { EvlogError } from "evlog";
 
 import { isEvlogError, tryPromiseExpecting } from "../../effect-interop";
-import type { MailboxData, MailMessage } from "../contracts";
+import type { MailboxData, MailFolder, MailMessage } from "../contracts";
+import { gmailCategoryLabelByFolder } from "../folder-mapping";
 import { getDisplayLabels } from "../label-presentation";
 import {
   getGmailHeaderValue,
@@ -195,6 +196,7 @@ export function createPrismaMailSyncRepository(client: PrismaClient = prisma) {
       };
     },
     getCachedMailboxData: async (input: {
+      readonly folder: MailFolder;
       readonly query: string;
       readonly userId: string;
       readonly view: "all" | "unread";
@@ -331,6 +333,7 @@ export function createPrismaMailSyncRepository(client: PrismaClient = prisma) {
     }) => upsertGmailMailAccount(client, input),
   } satisfies ProcessorMailSyncRepository & {
     readonly getCachedMailboxData: (input: {
+      readonly folder: MailFolder;
       readonly query: string;
       readonly userId: string;
       readonly view: "all" | "unread";
@@ -473,7 +476,12 @@ async function upsertGmailMailAccount(
 
 async function getCachedMailboxData(
   client: PrismaClient,
-  input: { readonly query: string; readonly userId: string; readonly view: "all" | "unread" },
+  input: {
+    readonly folder: MailFolder;
+    readonly query: string;
+    readonly userId: string;
+    readonly view: "all" | "unread";
+  },
 ) {
   if (!isCachedMailboxQuery(input.query)) {
     return null;
@@ -497,7 +505,7 @@ async function getCachedMailboxData(
           latestMessageAt: "desc",
         },
         take: 20,
-        where: getCachedThreadWhere(input.view),
+        where: getCachedThreadWhere(input.view, input.folder),
       },
     },
     where: {
@@ -532,13 +540,55 @@ function isCachedMailboxQuery(query: string) {
   return query.trim().length === 0;
 }
 
-function getCachedThreadWhere(view: "all" | "unread") {
+export function getCachedThreadWhere(view: "all" | "unread", folder: MailFolder) {
   const baseWhere = {
     deletedAt: null,
-    isInbox: true,
+  };
+  const folderWhere = getCachedFolderThreadWhere(folder);
+  const where = {
+    ...baseWhere,
+    ...folderWhere,
   };
 
-  return view === "unread" ? { ...baseWhere, isRead: false } : baseWhere;
+  return view === "unread" ? { ...where, isRead: false } : where;
+}
+
+const cachedFolderThreadWhere = {
+  archive: {
+    isDraft: false,
+    isInbox: false,
+    isSpam: false,
+    isTrash: false,
+  },
+  drafts: { isDraft: true },
+  forums: getCachedCategoryThreadWhere(gmailCategoryLabelByFolder.forums),
+  inbox: { isInbox: true },
+  junk: { isSpam: true },
+  promotions: getCachedCategoryThreadWhere(gmailCategoryLabelByFolder.promotions),
+  sent: { isSent: true },
+  social: getCachedCategoryThreadWhere(gmailCategoryLabelByFolder.social),
+  trash: { isTrash: true },
+  updates: getCachedCategoryThreadWhere(gmailCategoryLabelByFolder.updates),
+} satisfies Record<MailFolder, object>;
+
+function getCachedFolderThreadWhere(folder: MailFolder) {
+  return cachedFolderThreadWhere[folder];
+}
+
+function getCachedCategoryThreadWhere(providerLabelId: string) {
+  return {
+    messages: {
+      some: {
+        labels: {
+          some: {
+            label: {
+              providerLabelId,
+            },
+          },
+        },
+      },
+    },
+  };
 }
 
 function hasCachedMailboxThreads<T extends { readonly threads: readonly unknown[] }>(
