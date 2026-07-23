@@ -30,6 +30,8 @@
 
 - Temporary docs/files created on demand during investigation or planning must go under `temp/`, not `refs/`. `refs/` is for durable project reference material only.
 
+- Review docs: whenever presenting a plan, proposal, or anything the user needs to review, always produce it as an HTML doc (rendered artifact/page), not just chat text. Source file goes under `temp/` unless it is durable reference material.
+
 - Commands:
   - `pnpm run dev:web`
   - `pnpm run typecheck`
@@ -56,7 +58,7 @@
 - Schema-change flow: author with `prisma migrate dev` against the **dev** branch →
   commit the migration → apply to staging/prod with `prisma migrate deploy`. NOTE:
   Vercel's build is `pnpm build` only — it does **not** run migrations. So `migrate
-  deploy` is currently a **manual** step against the staging/prod Neon branch (target
+deploy` is currently a **manual** step against the staging/prod Neon branch (target
   it explicitly; the default `prisma.config.ts` loads `.env.local`/dev, so use a
   process-env `DATABASE_URL` or a no-dotenv config). No manual schema edits on staging/prod.
 
