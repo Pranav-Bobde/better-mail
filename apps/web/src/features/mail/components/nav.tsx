@@ -66,6 +66,9 @@ function CollapsedNavItem({ link }: { readonly link: NavLink }) {
               "size-9",
               getCollapsedActiveClass(link.variant),
             )}
+            // The server shell is identical for every folder, so prefetching
+            // each folder href just multiplies GET / requests.
+            prefetch={false}
             href={link.href}
           />
         }
@@ -95,6 +98,9 @@ function ExpandedNavItem({ link }: { readonly link: NavLink }) {
         getExpandedActiveClass(link.variant),
         "justify-start",
       )}
+      // The server shell is identical for every folder, so prefetching each
+      // folder href just multiplies GET / requests.
+      prefetch={false}
       href={link.href}
     >
       <link.icon className="mr-2 size-4" />
