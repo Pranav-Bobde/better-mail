@@ -653,7 +653,7 @@ function ReconnectGoogleButton() {
     setIsPending(true);
     const result = await authClient.signIn.social({
       callbackURL: "/",
-      errorCallbackURL: "/login",
+      errorCallbackURL: "/",
       provider: "google",
     });
 
@@ -828,7 +828,7 @@ function MailSignOutButton({ isCollapsed }: { readonly isCollapsed: boolean }) {
     await authClient.signOut({
       fetchOptions: {
         onSuccess: () => {
-          window.location.href = "/login";
+          window.location.href = "/";
         },
       },
     });

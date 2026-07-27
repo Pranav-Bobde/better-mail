@@ -17,13 +17,7 @@ import * as React from "react";
 
 import { Badge } from "@code-main/ui/components/badge";
 
-import {
-  ACCENT,
-  Eyebrow,
-  GoogleCta,
-  Kbd,
-  Wordmark,
-} from "@/features/mail/components/landing/landing-kit";
+import { ACCENT, Eyebrow, Kbd, Wordmark } from "@/features/mail/components/landing/landing-kit";
 import { WaitlistForm } from "@/features/mail/components/landing/waitlist/waitlist-live";
 import {
   DraftDemo,
@@ -69,10 +63,10 @@ function TopNav() {
             Star
           </a>
           <a
-            href="/login"
-            className="inline-flex h-9 items-center rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+            href="#waitlist"
+            className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90"
           >
-            Sign in
+            Join the waitlist
           </a>
         </div>
       </div>
@@ -191,7 +185,7 @@ function CapabilityTile({
 const FOOTER_PRODUCT = [
   { label: "Features", href: "#features" },
   { label: "Roadmap", href: "#roadmap" },
-  { label: "Sign in", href: "/login" },
+  { label: "Join the waitlist", href: "#waitlist" },
 ];
 const FOOTER_OSS = [
   { label: "Source code", href: "https://github.com/Pranav-Bobde/better-mail" },
@@ -217,10 +211,10 @@ function ProductFooter() {
                 <Github className="size-4" /> GitHub
               </a>
               <a
-                href="/login"
+                href="#waitlist"
                 className="inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
               >
-                Sign in
+                Join the waitlist
               </a>
             </div>
           </div>
@@ -291,7 +285,7 @@ export function LandingPage() {
             Open-source and Gmail-native. Ask AI summarizes any thread, searches in plain words, and
             drafts your replies — you just decide what sends.
           </p>
-          <div className="mt-8">
+          <div className="mt-8" id="waitlist">
             <WaitlistForm source="landing-hero" />
             <div className="mt-4 flex items-center justify-center gap-4 text-xs text-muted-foreground">
               <a
@@ -302,9 +296,7 @@ export function LandingPage() {
                 Star on GitHub
               </a>
               <span aria-hidden>·</span>
-              <a href="/login" className="transition-colors hover:text-foreground">
-                Have access? Sign in
-              </a>
+              <span>Onboarding in small batches</span>
             </div>
           </div>
         </div>
@@ -312,7 +304,7 @@ export function LandingPage() {
         <div className="mt-14">
           <MailAppReplica />
           <p className="mt-3 text-center font-mono text-[11px] text-muted-foreground">
-            The actual workspace — same components you sign into.
+            The actual workspace — the same components that ship.
           </p>
         </div>
       </section>
@@ -488,15 +480,20 @@ export function LandingPage() {
             />
             <div className="flex flex-col justify-between gap-6 rounded-lg border border-border bg-muted/20 p-6">
               <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-                get started
+                early access
               </span>
               <div>
-                <h3 className="text-sm font-semibold">Connect Gmail in one click.</h3>
+                <h3 className="text-sm font-semibold">Onboarding in small batches.</h3>
                 <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-                  The assistant starts working from the first sync.
+                  Leave your email and we&rsquo;ll reach out the moment a seat opens.
                 </p>
                 <div className="mt-4">
-                  <GoogleCta full />
+                  <a
+                    href="#waitlist"
+                    className="inline-flex h-9 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90"
+                  >
+                    Join the waitlist
+                  </a>
                 </div>
               </div>
             </div>
@@ -514,11 +511,11 @@ export function LandingPage() {
             Let the assistant take the first pass at your inbox.
           </h2>
           <p className="mx-auto mt-4 max-w-md text-pretty text-base leading-relaxed text-muted-foreground">
-            Connect your Google account and open Mail. It reads, sorts, and drafts — you decide what
-            sends.
+            We&rsquo;re onboarding in small batches while the assistant settles in. Leave your email
+            and we&rsquo;ll open a seat for you.
           </p>
-          <div className="mt-8 flex justify-center">
-            <GoogleCta />
+          <div className="mt-8">
+            <WaitlistForm source="landing-cta" />
           </div>
         </div>
       </section>

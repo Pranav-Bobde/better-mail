@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { LoginForm } from "@/features/auth/components/login-form";
+import { SIGN_IN_ENABLED } from "@/shared/lib/access";
 
 export default async function LoginPage() {
   const session = await auth.api.getSession({
@@ -10,6 +11,11 @@ export default async function LoginPage() {
   });
 
   if (session) {
+    redirect("/");
+  }
+
+  // Pre-launch: no public sign-in surface. Send visitors back to the waitlist.
+  if (!SIGN_IN_ENABLED) {
     redirect("/");
   }
 
