@@ -17,6 +17,8 @@ const requiredEnv = {
   LANGSMITH_API_KEY: "lsv2_pt_real-shaped-test",
   LANGSMITH_TRACING: "true",
   LANGSMITH_PROJECT: "ai-email-client",
+  LANGSMITH_HIDE_INPUTS: "true",
+  LANGSMITH_HIDE_OUTPUTS: "true",
   OPENROUTER_MODEL: "openai/gpt-5.4-nano",
   COPILOTKIT_TELEMETRY_DISABLED: "true",
   NODE_ENV: "test",
@@ -72,6 +74,24 @@ test("server env contract pins the only allowed OpenRouter model", () => {
 
   assert.equal(result.success, false);
   assert.equal(result.error?.issues[0]?.path.join("."), "OPENROUTER_MODEL");
+});
+
+test("server env contract requires LangSmith trace redaction opt-in values", () => {
+  const hideInputs = serverEnvSchema.safeParse({
+    ...requiredEnv,
+    LANGSMITH_HIDE_INPUTS: "false",
+  });
+
+  assert.equal(hideInputs.success, false);
+  assert.equal(hideInputs.error?.issues[0]?.path.join("."), "LANGSMITH_HIDE_INPUTS");
+
+  const hideOutputs = serverEnvSchema.safeParse({
+    ...requiredEnv,
+    LANGSMITH_HIDE_OUTPUTS: "false",
+  });
+
+  assert.equal(hideOutputs.success, false);
+  assert.equal(hideOutputs.error?.issues[0]?.path.join("."), "LANGSMITH_HIDE_OUTPUTS");
 });
 
 test("server env contract requires Copilot telemetry opt-out value", () => {

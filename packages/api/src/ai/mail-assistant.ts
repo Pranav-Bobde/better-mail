@@ -40,8 +40,9 @@ export const openRouterRoutingOptions = {
     provider: {
       allow_fallbacks: true,
       data_collection: "deny",
-      require_parameters: false,
+      require_parameters: true,
       sort: "latency",
+      zdr: true,
     } satisfies NonNullable<OpenRouterChatSettings["provider"]>,
   },
 } as const;

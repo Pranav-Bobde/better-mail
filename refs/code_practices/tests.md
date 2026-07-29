@@ -64,6 +64,12 @@ Ask the user before writing any test that involves: DB, file system modification
 
 Use explicit mock data only when: function is purely mathematical (e.g. add(a, b)); no file/network/external deps; mock is trivial and cannot fail in production. For files, paths, APIs, or user input → always use real execution.
 
+## Observability rules (a test must be able to fail)
+
+1. **Assert outcomes, not calls.** A mutation test proves the new state is readable back (mark read → read returns read), not just that an outbound request was sent. Asserting the call passes on code that sends the request and persists nothing.
+2. **Test doubles are complete, not partial.** Fakes implement the whole port and record writes. A context missing a dependency makes that dependency's branches unreachable — the test cannot distinguish "code forgot" from "nothing wired".
+3. **Optional dependencies hide bugs.** If a path needs a dependency, make it required and split the context type. `deps?.x` turns a missing write into legal behavior that neither the compiler nor the test can see.
+
 ## Caution: Global module mocks (Bun)
 
 - **`mock.module()` is process-global.** Any file that mocks a shared module (e.g. `utils/prisma`) replaces it for the whole process. Every other test file that imports that module in the same run gets the mock, not the real implementation — which can break integration tests or tests that expect the real module.

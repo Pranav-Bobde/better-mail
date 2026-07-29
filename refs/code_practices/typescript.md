@@ -92,3 +92,26 @@ async function getAgentIfExists(agentId: string, userId: string) {
 }
 // Handler uses getAgentIfExists(id, user.id) then c.json(...)
 ```
+
+## Test what you mean, not what's truthy
+
+A check must be as narrow as the question it asks. `!x` collapses `false`, `undefined`,
+`null`, `0`, and `""` into one branch — so a boolean that is genuinely `false` becomes
+indistinguishable from a field that was never sent.
+
+- Testing a boolean → compare to the boolean: `x === false`
+- Testing presence → compare to the absence: `x === undefined`, or `x == null` for null-or-undefined
+- Testing emptiness → test emptiness: `arr.length === 0`, not `!arr`
+
+This matters most **across a version boundary**. During any rolling deploy, client and server
+run different versions, so a newly added optional field arrives as `undefined` on older
+responses — and truthiness silently reads that as a real negative value. Optional fields on
+API responses always get an explicit comparison.
+
+```typescript
+// Bad — warns when the server simply didn't send the field yet
+if (!result.data.cacheApplied) showWarning();
+
+// Good — warns only when the server said it failed
+if (result.data.cacheApplied === false) showWarning();
+```

@@ -14,6 +14,14 @@
   - Internal app errors return 200 body `{ status: "error", error: string }`.
   - Non-2xx means infra/catastrophic failure only.
   - POST-only for internal data actions unless provider/framework endpoint needs otherwise.
+  - **UI-coupled errors also need UI feedback.** 200 + error body + rich evlog stays the
+    default. But when the failure is tied to an action the user just took and is watching —
+    an optimistic patch that must roll back, a mutation that half-succeeded across two
+    systems — logging alone is not enough: surface it, normally a toast. Never let an
+    optimistic update silently revert with no explanation.
+    Example: `setThreadRead` writes Gmail, then the local mirror. Gmail ok + mirror write
+    failing after internal retries → return 200 ok (Gmail is source of truth, next sync
+    heals it), log with full context, **and** toast that the change may briefly reappear.
 
 - Logging rules: follow `refs/evlog_practices/`.
   - Use evlog wide structured events.
@@ -46,15 +54,28 @@
 - Neon is the Postgres host. A Neon CLI (`neonctl`) is available for branch/env
   management — prefer it (read-first) over ad-hoc SQL.
 - **Prod DB is `neondb @ ep-floral-tree-aokfe9q5-pooler.c-2.ap-southeast-1.aws.neon.tech`
-  (Neon production/`main` branch). NEVER run destructive or schema-changing commands
+  (Neon production branch). NEVER run destructive or schema-changing commands
   against it** — no `prisma db push`, no `prisma migrate dev`/`reset`, no
   `DELETE`/`DROP`/`TRUNCATE`, no seeds/backfills. Read-only inspection only.
-- Env segregation (target state):
-  - **dev** = default for local. `.env.local` `DATABASE_URL` → Neon `dev` branch.
-    The prod URL must never live in `.env.local` or any repo file.
-  - **staging** = Neon `staging` branch; `DATABASE_URL` set only in Vercel Preview env.
-  - **prod** = Neon `main` branch; `DATABASE_URL` set only in Vercel Production env.
-  - Non-DB vars may share values across envs for now; DB URLs must be segregated.
+- Neon project `orange-glitter-59574568`. Three branches:
+
+  | Env     | Neon branch  | Branch id                     | Endpoint host               | `DATABASE_URL` lives in        |
+  | ------- | ------------ | ----------------------------- | --------------------------- | ------------------------------ |
+  | dev     | `dev`        | `br-ancient-sunset-aouim5vx`  | `ep-old-dawn-aou3woud`      | local `apps/web/.env.local`    |
+  | staging | `staging`    | `br-small-resonance-aory694q` | `ep-delicate-band-aongl5fw` | Vercel **Preview** env only    |
+  | prod    | `production` | `br-red-base-ao11zjtc`        | `ep-floral-tree-aokfe9q5`   | Vercel **Production** env only |
+
+- **Verified state (2026-07-25):** segregation is done. Local `.env.local` `DATABASE_URL`
+  points at the **dev** branch. The prod URL is not in `.env.local` or any repo file, and
+  must never be. To confirm which branch a URL targets, match its endpoint host against
+  the table above (`neonctl branches list --project-id orange-glitter-59574568`).
+- **Where each environment lives:** local dev runs off `.env.local`; staging and prod are
+  both Vercel deployments of the same project, separated by Vercel's Preview vs Production
+  environments. **The only value that differs between the three today is `DATABASE_URL`**
+  — every other var is shared. That will change as prod-only config lands (custom domain
+  origins, redaction flags), so re-check rather than assuming parity.
+- Env vars are required-by-default in `packages/env/src/server-schema.ts`. A var present in
+  Preview but missing in Production **fails the production build**, not just the feature.
 - Schema-change flow: author with `prisma migrate dev` against the **dev** branch →
   commit the migration → apply to staging/prod with `prisma migrate deploy`. NOTE:
   Vercel's build is `pnpm build` only — it does **not** run migrations. So `migrate
@@ -62,8 +83,24 @@ deploy` is currently a **manual** step against the staging/prod Neon branch (tar
   it explicitly; the default `prisma.config.ts` loads `.env.local`/dev, so use a
   process-env `DATABASE_URL` or a no-dotenv config). No manual schema edits on staging/prod.
 
+## Tooling access & approval
+
+- **Vercel CLI is available and authenticated.** Reading env/deploy state (`vercel env ls`,
+  `vercel ls`, `vercel inspect`, `vercel logs`) needs no approval. **Writing** env vars
+  (`vercel env add`/`rm`), promoting, or redeploying requires the user's explicit approval
+  first — present the exact command and target environment. **Production changes need a
+  second, separate confirmation**, never bundled with a Preview change in the same ask.
+- **Chrome profiles are available**, so browser-driven administration of connected services
+  (Google Cloud Console, Vercel dashboard, Neon, Search Console, DNS, OpenRouter, LangSmith)
+  is in scope. Same gate: **present the plan and the exact steps for review before acting**,
+  one service at a time, and say what state each step changes. Read-only inspection and
+  screenshotting to gather evidence is fine unprompted.
+- These permissions do not loosen anything else: destructive/DDL DB rules, the "wait for
+  confirmation before fixing" rule, and the commit/push rules all still apply.
+
 ## E2E / computer-use testing
 
+- OAuth staging rule: Gmail API access is not domain-whitelisted; Google OAuth requires the exact redirect domain to be authorized in Google Cloud. Use the stable staging domain `better-mail-git-staging-pranavbobdes-projects.vercel.app` for OAuth E2E. Do not use random Vercel preview subdomains unless they are explicitly added to Google Cloud first.
 - For real end-to-end verification that needs a live UI (browser / computer-use, e.g.
   Codex), you MAY use the user's own Gmail accounts **`bobdep31@gmail.com`** and
   **`nearl0407@gmail.com`** for testing. Use them to exercise real flows and to **create

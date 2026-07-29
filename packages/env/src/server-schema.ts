@@ -14,6 +14,8 @@ export const serverEnvSchema = z.object({
   LANGSMITH_API_KEY: z.string().min(1),
   LANGSMITH_TRACING: z.literal("true"),
   LANGSMITH_PROJECT: z.string().min(1),
+  LANGSMITH_HIDE_INPUTS: z.literal("true"),
+  LANGSMITH_HIDE_OUTPUTS: z.literal("true"),
   OPENROUTER_MODEL: z.literal("openai/gpt-5.4-nano"),
   COPILOTKIT_TELEMETRY_DISABLED: z.literal("true"),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
