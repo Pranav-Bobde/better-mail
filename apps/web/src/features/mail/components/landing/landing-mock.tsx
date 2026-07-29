@@ -31,7 +31,6 @@ import {
 } from "lucide-react";
 import * as React from "react";
 
-import { Avatar, AvatarFallback } from "@code-main/ui/components/avatar";
 import { Badge } from "@code-main/ui/components/badge";
 import { Button } from "@code-main/ui/components/button";
 import { Input } from "@code-main/ui/components/input";
@@ -39,6 +38,7 @@ import { Separator } from "@code-main/ui/components/separator";
 import { Tabs, TabsList, TabsTrigger } from "@code-main/ui/components/tabs";
 
 import { AccountSwitcher } from "@/features/mail/components/account-switcher";
+import { MailSenderMeta } from "@/features/mail/components/sender-meta";
 import { Nav, type NavLink } from "@/features/mail/components/nav";
 
 import { BrowserFrame } from "@/features/mail/components/landing/landing-kit";
@@ -273,22 +273,14 @@ function DetailPane({ animate }: { animate: boolean }) {
         </Button>
       </div>
       <Separator />
-      {/* sender meta — mirrors SingleMailBody */}
-      <div className="flex items-start p-4">
-        <div className="flex items-start gap-4 text-sm">
-          <Avatar>
-            <AvatarFallback>{getInitials(mail.name)}</AvatarFallback>
-          </Avatar>
-          <div className="grid gap-1">
-            <div className="font-semibold">{mail.name}</div>
-            <div className="line-clamp-1 text-xs">{mail.subject}</div>
-            <div className="line-clamp-1 text-xs">
-              <span className="font-medium">Reply-To:</span> {mail.email}
-            </div>
-          </div>
-        </div>
-        <div className="ml-auto text-xs text-muted-foreground">Tue, 4:02 PM</div>
-      </div>
+      {/* sender meta — same component as SingleMailBody, static demo date */}
+      <MailSenderMeta
+        dateText="Tue, 4:02 PM"
+        email={mail.email}
+        initials={getInitials(mail.name)}
+        name={mail.name}
+        subject={mail.subject}
+      />
       <Separator />
       <div className="min-h-0 flex-1 overflow-hidden p-4 text-sm leading-relaxed">
         <p>Hi there,</p>

@@ -10,6 +10,7 @@ import {
   MailX,
   MoreHorizontal,
   MoreVertical,
+  Pencil,
   Reply,
   ReplyAll,
   Trash2,
@@ -36,8 +37,12 @@ import { Textarea } from "@code-main/ui/components/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@code-main/ui/components/tooltip";
 import { cn } from "@code-main/ui/lib/utils";
 
+import type { MailFolder } from "@code-main/api/mail/contracts";
+
 import type { ComposeState } from "@/features/mail/components/mail-ai-tools";
 import type { Mail } from "@/features/mail/components/mail-data";
+import { MailSenderMeta } from "@/features/mail/components/sender-meta";
+import { hasDraftContent } from "@/features/mail/mutations/compose-draft-input";
 import {
   cleanMailPreviewText,
   getBaseSubject,
@@ -49,36 +54,52 @@ import {
 export function MailDisplay({
   compose,
   composeNotice,
+  folder,
+  isSavingDraft,
   isSending,
   isThreadLoading,
   mail,
+  onArchiveThread,
   onCloseCompose,
   onComposeChange,
+  onDeleteDraft,
+  onEditDraft,
   onForward,
+  onSaveDraft,
   onSendCompose,
   onSendReply,
+  onToggleThreadRead,
   threadMessages,
 }: {
   readonly compose: ComposeState;
   readonly composeNotice: string;
+  readonly folder: MailFolder;
+  readonly isSavingDraft: boolean;
   readonly isSending: boolean;
   readonly isThreadLoading: boolean;
   readonly mail: Mail | null;
+  readonly onArchiveThread: () => void;
   readonly onCloseCompose: () => void;
   readonly onComposeChange: React.Dispatch<React.SetStateAction<ComposeState>>;
+  readonly onDeleteDraft: () => void;
+  readonly onEditDraft: () => void;
   readonly onForward: () => void;
+  readonly onSaveDraft: () => void;
   readonly onSendCompose: () => void;
   readonly onSendReply: (mail: Mail, body: string) => void;
+  readonly onToggleThreadRead: () => void;
   readonly threadMessages: readonly Mail[] | null;
 }) {
   if (compose.open) {
     return (
       <ComposePanel
         compose={compose}
+        isSaving={isSavingDraft}
         isSending={isSending}
         notice={composeNotice}
         onChange={onComposeChange}
         onClose={onCloseCompose}
+        onSaveDraft={onSaveDraft}
         onSend={onSendCompose}
       />
     );
@@ -86,54 +107,15 @@ export function MailDisplay({
 
   return (
     <div className="flex h-full min-w-0 flex-col">
-      <div className="flex shrink-0 items-center overflow-x-auto p-2">
-        <div className="flex items-center gap-1">
-          <ToolButton disabled={!mail} label="Archive">
-            <Archive className="size-4" />
-            <span className="sr-only">Archive</span>
-          </ToolButton>
-          <ToolButton disabled={!mail} label="Move to junk">
-            <ArchiveX className="size-4" />
-            <span className="sr-only">Move to junk</span>
-          </ToolButton>
-          <ToolButton disabled={!mail} label="Move to trash">
-            <Trash2 className="size-4" />
-            <span className="sr-only">Move to trash</span>
-          </ToolButton>
-          <Separator className="mx-0.5 h-6" orientation="vertical" />
-          <ToolButton disabled={!mail} label="Snooze">
-            <Clock className="size-4" />
-            <span className="sr-only">Snooze</span>
-          </ToolButton>
-        </div>
-        <div className="ml-auto flex items-center gap-1">
-          <ToolButton disabled={!mail} label="Reply">
-            <Reply className="size-4" />
-            <span className="sr-only">Reply</span>
-          </ToolButton>
-          <ToolButton disabled={!mail} label="Reply all">
-            <ReplyAll className="size-4" />
-            <span className="sr-only">Reply all</span>
-          </ToolButton>
-          <ToolButton disabled={!mail} label="Forward" onClick={onForward}>
-            <Forward className="size-4" />
-            <span className="sr-only">Forward</span>
-          </ToolButton>
-        </div>
-        <Separator className="mx-1 h-6" orientation="vertical" />
-        <DropdownMenu>
-          <DropdownMenuTrigger render={<Button disabled={!mail} size="icon" variant="ghost" />}>
-            <MoreVertical className="size-4" />
-            <span className="sr-only">More</span>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem>Mark as unread</DropdownMenuItem>
-            <DropdownMenuItem>Star thread</DropdownMenuItem>
-            <DropdownMenuItem>Add label</DropdownMenuItem>
-            <DropdownMenuItem>Mute thread</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+      <MailDisplayToolbar
+        folder={folder}
+        mail={mail}
+        onArchiveThread={onArchiveThread}
+        onDeleteDraft={onDeleteDraft}
+        onEditDraft={onEditDraft}
+        onForward={onForward}
+        onToggleThreadRead={onToggleThreadRead}
+      />
       <Separator />
       {mail ? (
         <SelectedMail
@@ -150,22 +132,129 @@ export function MailDisplay({
   );
 }
 
+function MailDisplayToolbar({
+  folder,
+  mail,
+  onArchiveThread,
+  onDeleteDraft,
+  onEditDraft,
+  onForward,
+  onToggleThreadRead,
+}: {
+  readonly folder: MailFolder;
+  readonly mail: Mail | null;
+  readonly onArchiveThread: () => void;
+  readonly onDeleteDraft: () => void;
+  readonly onEditDraft: () => void;
+  readonly onForward: () => void;
+  readonly onToggleThreadRead: () => void;
+}) {
+  const isDraftsFolder = folder === "drafts";
+
+  return (
+    <div className="flex shrink-0 items-center overflow-x-auto p-2">
+      <div className="flex items-center gap-1">
+        <ToolButton disabled={!mail} label="Archive" onClick={onArchiveThread}>
+          <Archive className="size-4" />
+          <span className="sr-only">Archive</span>
+        </ToolButton>
+        <ToolButton disabled={!mail} label="Move to junk">
+          <ArchiveX className="size-4" />
+          <span className="sr-only">Move to junk</span>
+        </ToolButton>
+        {isDraftsFolder ? (
+          <ToolButton disabled={!mail} label="Delete draft" onClick={onDeleteDraft}>
+            <Trash2 className="size-4" />
+            <span className="sr-only">Delete draft</span>
+          </ToolButton>
+        ) : (
+          <ToolButton disabled={!mail} label="Move to trash">
+            <Trash2 className="size-4" />
+            <span className="sr-only">Move to trash</span>
+          </ToolButton>
+        )}
+        <Separator className="mx-0.5 h-6" orientation="vertical" />
+        {isDraftsFolder ? (
+          <ToolButton disabled={!mail} label="Edit draft" onClick={onEditDraft}>
+            <Pencil className="size-4" />
+            <span className="sr-only">Edit draft</span>
+          </ToolButton>
+        ) : null}
+        <ToolButton disabled={!mail} label="Snooze">
+          <Clock className="size-4" />
+          <span className="sr-only">Snooze</span>
+        </ToolButton>
+      </div>
+      <div className="ml-auto flex items-center gap-1">
+        <ToolButton disabled={!mail} label="Reply">
+          <Reply className="size-4" />
+          <span className="sr-only">Reply</span>
+        </ToolButton>
+        <ToolButton disabled={!mail} label="Reply all">
+          <ReplyAll className="size-4" />
+          <span className="sr-only">Reply all</span>
+        </ToolButton>
+        <ToolButton disabled={!mail} label="Forward" onClick={onForward}>
+          <Forward className="size-4" />
+          <span className="sr-only">Forward</span>
+        </ToolButton>
+      </div>
+      <Separator className="mx-1 h-6" orientation="vertical" />
+      <DropdownMenu>
+        <DropdownMenuTrigger render={<Button disabled={!mail} size="icon" variant="ghost" />}>
+          <MoreVertical className="size-4" />
+          <span className="sr-only">More</span>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={onToggleThreadRead}>
+            {getReadToggleLabel(mail)}
+          </DropdownMenuItem>
+          <DropdownMenuItem>Star thread</DropdownMenuItem>
+          <DropdownMenuItem>Add label</DropdownMenuItem>
+          <DropdownMenuItem>Mute thread</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
+function getReadToggleLabel(mail: Mail | null) {
+  return mail && !mail.read ? "Mark as read" : "Mark as unread";
+}
+
+function canSaveComposeDraft(compose: ComposeState, isSaving: boolean, isSending: boolean) {
+  return hasDraftContent(compose) && !isSaving && !isSending;
+}
+
+function getSaveDraftLabel(isSaving: boolean) {
+  return isSaving ? "Saving..." : "Save draft";
+}
+
+function getSendLabel(isSending: boolean) {
+  return isSending ? "Sending..." : "Send";
+}
+
 function ComposePanel({
   compose,
+  isSaving,
   isSending,
   notice,
   onChange,
   onClose,
+  onSaveDraft,
   onSend,
 }: {
   readonly compose: ComposeState;
+  readonly isSaving: boolean;
   readonly isSending: boolean;
   readonly notice: string;
   readonly onChange: React.Dispatch<React.SetStateAction<ComposeState>>;
   readonly onClose: () => void;
+  readonly onSaveDraft: () => void;
   readonly onSend: () => void;
 }) {
   const canSend = canSendCompose(compose, isSending);
+  const canSaveDraft = canSaveComposeDraft(compose, isSaving, isSending);
 
   return (
     <div className="flex h-full flex-col">
@@ -215,9 +304,19 @@ function ComposePanel({
         {notice ? (
           <div className="border-t px-4 py-2 text-xs text-destructive">{notice}</div>
         ) : null}
-        <div className="flex items-center border-t p-4">
-          <Button className="ml-auto" disabled={!canSend} size="sm" type="submit">
-            {isSending ? "Sending..." : "Send"}
+        <div className="flex items-center gap-2 border-t p-4">
+          <Button
+            className="ml-auto"
+            disabled={!canSaveDraft}
+            onClick={onSaveDraft}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            {getSaveDraftLabel(isSaving)}
+          </Button>
+          <Button disabled={!canSend} size="sm" type="submit">
+            {getSendLabel(isSending)}
           </Button>
         </div>
       </form>
@@ -392,23 +491,13 @@ function MailDetailSkeleton() {
 function SingleMailBody({ mail }: { readonly mail: Mail }) {
   return (
     <>
-      <div className="flex items-start p-4">
-        <div className="flex items-start gap-4 text-sm">
-          <Avatar>
-            <AvatarFallback>{getInitials(mail.name)}</AvatarFallback>
-          </Avatar>
-          <div className="grid gap-1">
-            <div className="font-semibold">{mail.name}</div>
-            <div className="line-clamp-1 text-xs">{repairMojibakeText(mail.subject)}</div>
-            <div className="line-clamp-1 text-xs">
-              <span className="font-medium">Reply-To:</span> {mail.email}
-            </div>
-          </div>
-        </div>
-        <div className="ml-auto text-xs text-muted-foreground">
-          {format(new Date(mail.date), "PPpp")}
-        </div>
-      </div>
+      <MailSenderMeta
+        dateText={format(new Date(mail.date), "PPpp")}
+        email={mail.email}
+        initials={getInitials(mail.name)}
+        name={mail.name}
+        subject={repairMojibakeText(mail.subject)}
+      />
       <Separator />
       {/* Dark app surface framing a boxed email surface — the email keeps its
           own (usually light) canvas, the pane around it stays in-theme. */}

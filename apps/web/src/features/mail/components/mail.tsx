@@ -29,6 +29,7 @@ import {
   Sparkles,
   Trash2,
   Users2,
+  UserX,
 } from "lucide-react";
 import { usePathname, useSearchParams, type ReadonlyURLSearchParams } from "next/navigation";
 import * as React from "react";
@@ -85,6 +86,25 @@ import { MailList } from "@/features/mail/components/mail-list";
 import { MailLoading } from "@/features/mail/components/mail-loading";
 import { createMailboxQueryOptions } from "@/features/mail/components/mailbox-query-options";
 import { Nav, type NavLink } from "@/features/mail/components/nav";
+import {
+  createComposeStateFromDraftMessage,
+  createDraftInputFromCompose,
+} from "@/features/mail/mutations/compose-draft-input";
+import {
+  getDeleteAccountErrorMessage,
+  getDeleteAccountLabel,
+} from "@/features/mail/mutations/delete-account";
+import { resolveDraftId } from "@/features/mail/mutations/draft-lookup";
+import { reconnectGoogleAccount } from "@/features/mail/mutations/reconnect-google";
+import {
+  useArchiveThreadMutation,
+  useAutoMarkThreadRead,
+  useCreateDraftMutation,
+  useDeleteDraftMutation,
+  useDraftIdLookup,
+  useSetThreadReadMutation,
+  useUpdateDraftMutation,
+} from "@/features/mail/mutations/use-mail-mutations";
 import { useMailboxRealtimeInvalidation } from "@/features/mail/realtime/use-mailbox-realtime-invalidation";
 import { ModeToggle } from "@/shared/components/mode-toggle";
 import { authClient } from "@/shared/utils/auth-client";
@@ -207,6 +227,15 @@ function MailWorkspace({
     refetchMailbox,
   } = useMailboxData(searchQuery, view, folder);
   const sendMailMutation = useSendReplyMutation();
+  const setThreadReadMutation = useSetThreadReadMutation();
+  const archiveThreadMutation = useArchiveThreadMutation(folder);
+  const createDraftMutation = useCreateDraftMutation();
+  const updateDraftMutation = useUpdateDraftMutation();
+  const deleteDraftMutation = useDeleteDraftMutation();
+  const draftIdLookup = useDraftIdLookup(folder);
+  // Gmail draft id being edited in compose; while set, "Save draft" updates
+  // that draft instead of creating a new one.
+  const [editingDraftId, setEditingDraftId] = React.useState<string | null>(null);
   const mailboxViewState = getMailboxViewState(mailbox, mailboxErrorMessage);
   const activeMails = mailboxViewState.activeMails;
   const clientSearchQuery = getClientMailSearchQuery(searchQuery, mailbox !== null);
@@ -229,15 +258,20 @@ function MailWorkspace({
       open: true,
     });
     setComposeNotice("");
+    setEditingDraftId(null);
   }, []);
   const closeCompose = React.useCallback(() => {
     setCompose(emptyComposeState);
     setComposeNotice("");
+    setEditingDraftId(null);
   }, []);
   const toggleAiPanel = React.useCallback(() => setIsAiOpen((value) => !value), []);
   const closeAiPanel = React.useCallback(() => setIsAiOpen(false), []);
 
   useSelectedMailSync(activeMails, selected, setSelected);
+  // Opening an unread thread marks it read (new intentional behavior). Gated
+  // on a real mailbox so the demo fallback list never fires Gmail mutations.
+  useAutoMarkThreadRead(getAutoMarkReadTarget(mailbox, selectedMail), setThreadReadMutation.mutate);
   usePendingOpenLatest(
     activeMails,
     mailbox,
@@ -283,6 +317,7 @@ function MailWorkspace({
     setSelected(id);
     setCompose(emptyComposeState);
     setComposeNotice("");
+    setEditingDraftId(null);
   }, []);
 
   const openDraftInCompose = React.useCallback(
@@ -290,6 +325,7 @@ function MailWorkspace({
       setActiveDraft(draft);
       setCompose(createComposeStateFromDraft(draft, selectedMail));
       setComposeNotice("");
+      setEditingDraftId(null);
     },
     [selectedMail],
   );
@@ -309,6 +345,7 @@ function MailWorkspace({
       to: "",
     });
     setComposeNotice("");
+    setEditingDraftId(null);
   }, [selectedMail]);
 
   const sendDraft = React.useCallback(
@@ -448,6 +485,79 @@ function MailWorkspace({
     [draftDecisions, markDraftDecision, openDraftInCompose, selectedMail, sendDraft],
   );
 
+  function toggleSelectedThreadRead() {
+    if (!selectedMail) {
+      return;
+    }
+
+    setThreadReadMutation.mutate({
+      read: !selectedMail.read,
+      threadId: selectedMail.threadId,
+    });
+  }
+
+  function archiveSelectedThread() {
+    if (!selectedMail) {
+      return;
+    }
+
+    archiveThreadMutation.mutate({ threadId: selectedMail.threadId });
+  }
+
+  function getSelectedDraftId() {
+    if (!selectedMail) {
+      return null;
+    }
+
+    const draftId = resolveDraftId(draftIdLookup, selectedMail);
+
+    if (draftId === null) {
+      toast.error("Could not find this draft. Refresh the mailbox and try again.");
+    }
+
+    return draftId;
+  }
+
+  // Drafts are low-value and restorable by re-saving, so deleting skips a
+  // confirmation dialog.
+  function deleteSelectedDraft() {
+    const draftId = getSelectedDraftId();
+
+    if (draftId === null) {
+      return;
+    }
+
+    deleteDraftMutation.mutate({ draftId });
+  }
+
+  function editSelectedDraft() {
+    if (!selectedMail) {
+      return;
+    }
+
+    const draftId = getSelectedDraftId();
+
+    if (draftId === null) {
+      return;
+    }
+
+    setActiveDraft(null);
+    setEditingDraftId(draftId);
+    setCompose(createComposeStateFromDraftMessage(selectedMail));
+    setComposeNotice("");
+  }
+
+  function saveCurrentDraft() {
+    const draftInput = createDraftInputFromCompose(compose);
+
+    if (editingDraftId !== null) {
+      updateDraftMutation.mutate({ ...draftInput, draftId: editingDraftId });
+      return;
+    }
+
+    createDraftMutation.mutate(draftInput);
+  }
+
   async function sendCurrentCompose() {
     const result = draftEmailParameters.safeParse(compose);
 
@@ -472,6 +582,7 @@ function MailWorkspace({
       setActiveDraft(null);
       setCompose(emptyComposeState);
       setComposeNotice("");
+      setEditingDraftId(null);
     } catch {
       setComposeNotice("Email send failed. Check the toast for details.");
     }
@@ -492,7 +603,7 @@ function MailWorkspace({
         orientation="horizontal"
       >
         <MailSidebarPanel
-          account={mailbox?.account}
+          account={getMailboxAccount(mailbox)}
           defaultSize={layout[mailPanelIds.sidebar]}
           isCollapsed={isCollapsed}
           navCollapsedSize={navCollapsedSize}
@@ -529,13 +640,20 @@ function MailWorkspace({
           <MailDisplay
             compose={compose}
             composeNotice={composeNotice}
+            folder={folder}
+            isSavingDraft={isDraftSavePending(createDraftMutation, updateDraftMutation)}
             isSending={sendMailMutation.isPending}
             isThreadLoading={isThreadLoading}
             mail={selectedMail}
+            onArchiveThread={archiveSelectedThread}
             onCloseCompose={closeCompose}
             onComposeChange={setCompose}
+            onDeleteDraft={deleteSelectedDraft}
+            onEditDraft={editSelectedDraft}
             onForward={forwardSelectedMail}
+            onSaveDraft={saveCurrentDraft}
             onSendCompose={() => void sendCurrentCompose()}
+            onToggleThreadRead={toggleSelectedThreadRead}
             onSendReply={(mail, body) => {
               sendMailMutation.mutate({
                 body,
@@ -651,14 +769,9 @@ function ReconnectGoogleButton() {
 
   async function reconnect() {
     setIsPending(true);
-    const result = await authClient.signIn.social({
-      callbackURL: "/",
-      errorCallbackURL: "/",
-      provider: "google",
-    });
+    const started = await reconnectGoogleAccount();
 
-    if (result.error) {
-      toast.error(`Error: ${result.error.message ?? "Google reconnect failed."}`);
+    if (!started) {
       setIsPending(false);
     }
   }
@@ -815,6 +928,7 @@ function MailSidebarPanel({
       <div className={cn("mt-auto grid gap-1 p-2", isCollapsed && "justify-center")}>
         <ModeToggle isCollapsed={isCollapsed} />
         <MailSignOutButton isCollapsed={isCollapsed} />
+        <MailDeleteAccountButton isCollapsed={isCollapsed} />
       </div>
     </ResizablePanel>
   );
@@ -865,6 +979,77 @@ function MailSignOutButton({ isCollapsed }: { readonly isCollapsed: boolean }) {
     >
       <LogOut className="size-4" />
       <span className="text-sm">Sign out</span>
+    </Button>
+  );
+}
+
+// Two-step inline confirm instead of a dialog: the first click arms the
+// destructive state, blurring disarms it. Deletion cascades all synced mail
+// data and best-effort revokes the Google grant server-side.
+function MailDeleteAccountButton({ isCollapsed }: { readonly isCollapsed: boolean }) {
+  const [isConfirming, setIsConfirming] = React.useState(false);
+  const [isPending, setIsPending] = React.useState(false);
+  const label = getDeleteAccountLabel(isConfirming);
+  const confirmClassName = cn(isConfirming && "text-destructive hover:text-destructive");
+
+  async function deleteAccount() {
+    setIsPending(true);
+    const { error } = await authClient.deleteUser();
+
+    if (error) {
+      toast.error(getDeleteAccountErrorMessage(error));
+      setIsPending(false);
+      setIsConfirming(false);
+      return;
+    }
+
+    // Better Auth already removed the session and cleared its cookie; land on
+    // the logged-out landing page.
+    window.location.href = "/";
+  }
+
+  function handleClick() {
+    if (!isConfirming) {
+      setIsConfirming(true);
+      return;
+    }
+
+    void deleteAccount();
+  }
+
+  if (isCollapsed) {
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              className={confirmClassName}
+              disabled={isPending}
+              onBlur={() => setIsConfirming(false)}
+              onClick={handleClick}
+              size="icon"
+              variant="ghost"
+            />
+          }
+        >
+          <UserX className="size-4" />
+          <span className="sr-only">{label}</span>
+        </TooltipTrigger>
+        <TooltipContent side="right">{label}</TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <Button
+      className={cn("w-full justify-start gap-2 px-2 text-muted-foreground", confirmClassName)}
+      disabled={isPending}
+      onBlur={() => setIsConfirming(false)}
+      onClick={handleClick}
+      variant="ghost"
+    >
+      <UserX className="size-4" />
+      <span className="text-sm">{label}</span>
     </Button>
   );
 }
@@ -1053,6 +1238,23 @@ function getSearchableMailText(mail: MailItem) {
 
 function getMailboxCounts(mailbox: MailboxData | null) {
   return mailbox?.counts ?? fallbackCounts;
+}
+
+// Auto-mark-read stays off for the demo fallback list: without a real mailbox
+// there is no Gmail thread to mutate.
+function getAutoMarkReadTarget(mailbox: MailboxData | null, selectedMail: MailItem | null) {
+  return mailbox ? selectedMail : null;
+}
+
+function getMailboxAccount(mailbox: MailboxData | null) {
+  return mailbox?.account;
+}
+
+function isDraftSavePending(
+  createDraftMutation: { readonly isPending: boolean },
+  updateDraftMutation: { readonly isPending: boolean },
+) {
+  return createDraftMutation.isPending || updateDraftMutation.isPending;
 }
 
 function getSelectedMail(activeMails: readonly MailItem[], selected: string | null) {
