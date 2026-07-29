@@ -8,6 +8,12 @@ import { EvlogError } from "evlog";
 import type { GmailClient as GmailClientIdentifier } from "./gmail-client";
 import type { MailboxService as MailboxServiceIdentifier } from "./mailbox-service";
 
+import {
+  createSignedInGmailContext as createSignedInGmailContextWithScopes,
+  gmailLegacyReadSendTestScopes,
+  hasMailErrorCode,
+  runServiceEffect,
+} from "./mail-test-support";
 import { setRequiredTestEnv } from "../test-env";
 
 setRequiredTestEnv();
@@ -92,6 +98,50 @@ async function fetchMailboxThreadsListUrl(input: Parameters<typeof getMailboxDat
   assert.ok(threadsRequest);
   return new URL(threadsRequest.url);
 }
+
+test("fetches Gmail mailbox when only the gmail.modify scope is granted", async () => {
+  const mutableRequests: Request[] = [];
+  globalThis.fetch = createMailboxReadFetchMock(mutableRequests);
+
+  const result = await getMailboxData(
+    {
+      query: "from:sender",
+      view: "unread",
+    },
+    createSignedInGmailContext("better-auth-read-token", [
+      "email",
+      "profile",
+      "https://www.googleapis.com/auth/gmail.modify",
+    ]),
+  );
+
+  assert.equal(result.status, "ok");
+  assert.equal(result.data.account.email, "demo-user@example.com");
+});
+
+test("sends Gmail when only the gmail.modify scope is granted", async () => {
+  globalThis.fetch = async () =>
+    Response.json({
+      id: "sent-message-id",
+      labelIds: ["SENT"],
+      threadId: "sent-thread-id",
+    });
+
+  const result = await sendMailboxMessage(
+    {
+      body: "Real-shaped test body",
+      subject: "Real-shaped test subject",
+      to: "receiver@example.com",
+    },
+    createSignedInGmailContext("better-auth-access-token", [
+      "email",
+      "profile",
+      "https://www.googleapis.com/auth/gmail.modify",
+    ]),
+  );
+
+  assert.equal(result.status, "ok");
+});
 
 test("lists archived Gmail threads with archive query and no label filter", async () => {
   const url = await fetchMailboxThreadsListUrl({
@@ -1031,14 +1081,12 @@ async function runWithMailboxService<A, E>(
   gmailClientLayer: Layer.Layer<GmailClientIdentifier>,
   run: (service: Context.Service.Shape<typeof MailboxServiceIdentifier>) => Effect.Effect<A, E>,
 ) {
-  return Effect.runPromise(
-    Effect.provide(
-      Effect.gen(function* () {
-        const service = yield* MailboxService;
-        return yield* run(service);
-      }),
-      MailboxService.layer.pipe(Layer.provide(gmailClientLayer)),
-    ),
+  return runServiceEffect(
+    MailboxService.layer.pipe(Layer.provide(gmailClientLayer)),
+    Effect.gen(function* () {
+      const service = yield* MailboxService;
+      return yield* run(service);
+    }),
   );
 }
 
@@ -1049,6 +1097,16 @@ function createInjectedGmailClientLayer(
   return Layer.succeed(
     GmailClient,
     GmailClient.of({
+      createDraft: () =>
+        Effect.succeed({
+          id: "r-7481991503868632340",
+          message: {
+            id: "18c2f5f6c5f9f101",
+            labelIds: ["DRAFT"],
+            threadId: "199aa11bb22cc330",
+          },
+        }),
+      deleteDraft: (input) => Effect.succeed({ draftId: input.draftId }),
       getLabel: (_accessToken: string, _userId: string, labelId: string) =>
         Effect.sync(() => {
           mutableCalls.push(`getLabel:${labelId}`);
@@ -1067,6 +1125,7 @@ function createInjectedGmailClientLayer(
           );
         }),
       getThreadIfExists: () => Effect.succeed(null),
+      listDrafts: () => Effect.succeed([]),
       listHistory: () => Effect.succeed({ history: [], historyId: "176001" }),
       listLabels: () =>
         Effect.sync(() => {
@@ -1087,11 +1146,26 @@ function createInjectedGmailClientLayer(
             ],
           };
         }),
+      modifyThread: (input) =>
+        Effect.succeed({
+          historyId: "987660",
+          id: input.threadId,
+          messages: [{ id: "199aa22cc33dd441", labelIds: ["INBOX"], threadId: input.threadId }],
+        }),
       sendMessage: () =>
         Effect.succeed({
           id: "sent-message-id",
           labelIds: ["SENT"],
           threadId: "sent-thread-id",
+        }),
+      updateDraft: () =>
+        Effect.succeed({
+          id: "r-7481991503868632340",
+          message: {
+            id: "18c2f5f6c5f9f101",
+            labelIds: ["DRAFT"],
+            threadId: "199aa11bb22cc330",
+          },
         }),
       watchMailbox: () => Effect.succeed({ expiration: "176001", historyId: "176001" }),
       ...overrides,
@@ -1103,39 +1177,10 @@ function encodeGmailBody(input: string) {
   return Buffer.from(input, "utf8").toString("base64url");
 }
 
-function hasMailErrorCode(error: unknown, code: string) {
-  const errorCode = (error as { readonly code?: unknown }).code;
-  return error instanceof Error && typeof errorCode === "string" && errorCode === code;
-}
-
+// This suite's legacy default asserts pre-consolidation grants keep working.
 function createSignedInGmailContext(
   accessToken: string,
-  scopes: readonly string[] = [
-    "email",
-    "profile",
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/gmail.send",
-  ],
+  scopes: readonly string[] = gmailLegacyReadSendTestScopes,
 ) {
-  return {
-    getGoogleAccessToken: async () => ({
-      accessToken,
-      scopes,
-    }),
-    session: {
-      session: {
-        expiresAt: new Date("2026-06-13T12:00:00.000Z"),
-        id: "session-id",
-        token: "session-token",
-        userId: "user-id",
-      },
-      user: {
-        email: "demo-user@example.com",
-        emailVerified: true,
-        id: "user-id",
-        image: null,
-        name: "Demo User",
-      },
-    },
-  };
+  return createSignedInGmailContextWithScopes(accessToken, scopes);
 }

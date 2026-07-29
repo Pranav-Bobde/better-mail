@@ -46,19 +46,6 @@ export const gmailProfileResponseSchema = Schema.Struct({
   threadsTotal: Schema.optional(Schema.Number),
 });
 
-export const gmailListMessagesResponseSchema = Schema.Struct({
-  messages: Schema.optional(
-    Schema.Array(
-      Schema.Struct({
-        id: Schema.String,
-        threadId: Schema.String,
-      }),
-    ),
-  ),
-  nextPageToken: Schema.optional(Schema.String),
-  resultSizeEstimate: Schema.optional(Schema.Number),
-});
-
 export const gmailListThreadsResponseSchema = Schema.Struct({
   nextPageToken: Schema.optional(Schema.String),
   resultSizeEstimate: Schema.optional(Schema.Number),
@@ -117,6 +104,49 @@ export const gmailLabelResponseSchema = Schema.Struct({
   threadsTotal: Schema.optional(Schema.Number),
   threadsUnread: Schema.optional(Schema.Number),
   type: Schema.String,
+});
+
+// drafts.create/drafts.update return the draft envelope with a minimal message
+// stub: { id, message: { id, threadId, labelIds: ["DRAFT"] } }.
+export const gmailDraftResponseSchema = Schema.Struct({
+  id: Schema.String,
+  message: Schema.Struct({
+    id: Schema.String,
+    labelIds: Schema.optional(Schema.Array(Schema.String)),
+    threadId: Schema.String,
+  }),
+});
+
+// drafts.list omits the drafts key entirely when the mailbox has no drafts.
+export const gmailListDraftsResponseSchema = Schema.Struct({
+  drafts: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        message: Schema.Struct({
+          id: Schema.String,
+          threadId: Schema.String,
+        }),
+      }),
+    ),
+  ),
+  resultSizeEstimate: Schema.optional(Schema.Number),
+});
+
+// threads.modify returns the thread with minimal message stubs (no payload):
+// { id, historyId, messages: [{ id, threadId, labelIds }] }.
+export const gmailModifyThreadResponseSchema = Schema.Struct({
+  historyId: Schema.optional(Schema.String),
+  id: Schema.String,
+  messages: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        labelIds: Schema.optional(Schema.Array(Schema.String)),
+        threadId: Schema.String,
+      }),
+    ),
+  ),
 });
 
 export const gmailSendResponseSchema = Schema.Struct({

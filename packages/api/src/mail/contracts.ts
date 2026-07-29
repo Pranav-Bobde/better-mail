@@ -32,6 +32,40 @@ export const getThreadInputSchema = z.object({
   threadId: z.string().min(1),
 });
 
+export const setThreadReadInputSchema = z.object({
+  read: z.boolean(),
+  threadId: z.string().min(1),
+});
+
+export const archiveThreadInputSchema = z.object({
+  threadId: z.string().min(1),
+});
+
+// Drafts may be saved before a recipient or subject exists, so both stay
+// optional here while the send contract keeps requiring them.
+export const createDraftInputSchema = z.object({
+  body: z.string().max(20_000),
+  inReplyTo: z.string().min(1).optional(),
+  subject: z.string().max(500).optional(),
+  threadId: z.string().min(1).optional(),
+  to: z.email().optional(),
+});
+
+export const updateDraftInputSchema = z.object({
+  body: z.string().max(20_000),
+  draftId: z.string().min(1),
+  inReplyTo: z.string().min(1).optional(),
+  subject: z.string().max(500).optional(),
+  threadId: z.string().min(1).optional(),
+  to: z.email().optional(),
+});
+
+export const deleteDraftInputSchema = z.object({
+  draftId: z.string().min(1),
+});
+
+export const listDraftsInputSchema = z.object({});
+
 const mailMessageSchema = z.object({
   date: z.string(),
   email: z.email(),
@@ -63,43 +97,74 @@ const mailboxDataSchema = z.object({
   source: z.literal("gmail"),
 });
 
-export const getMailboxOutputSchema = z.discriminatedUnion("status", [
-  z.object({
-    data: mailboxDataSchema,
-    status: z.literal("ok"),
-  }),
-  z.object({
-    error: z.string(),
-    status: z.literal("error"),
-  }),
-]);
-
-export const sendMailOutputSchema = z.discriminatedUnion("status", [
-  z.object({
-    data: z.object({
-      messageId: z.string(),
-      threadId: z.string(),
+// Every mail procedure resolves HTTP 200 with this ok/error envelope; non-2xx
+// stays reserved for infra failures per refs/backend_api_spec.md.
+const createMailOutputSchema = <Data extends z.ZodType>(data: Data) =>
+  z.discriminatedUnion("status", [
+    z.object({
+      data,
+      status: z.literal("ok"),
     }),
-    status: z.literal("ok"),
-  }),
-  z.object({
-    error: z.string(),
-    status: z.literal("error"),
-  }),
-]);
-
-export const getThreadOutputSchema = z.discriminatedUnion("status", [
-  z.object({
-    data: z.object({
-      messages: z.array(mailMessageSchema),
+    z.object({
+      error: z.string(),
+      status: z.literal("error"),
     }),
-    status: z.literal("ok"),
-  }),
+  ]);
+
+const draftMutationDataSchema = z.object({
+  draftId: z.string(),
+  messageId: z.string(),
+  threadId: z.string(),
+});
+
+export const getMailboxOutputSchema = createMailOutputSchema(mailboxDataSchema);
+
+export const sendMailOutputSchema = createMailOutputSchema(
   z.object({
-    error: z.string(),
-    status: z.literal("error"),
+    messageId: z.string(),
+    threadId: z.string(),
   }),
-]);
+);
+
+// mirrorApplied: false means Gmail accepted the change but the local cache
+// mirror could not be updated after internal retries — the UI must warn that
+// the change may briefly reappear until the next sync heals the mirror.
+export const setThreadReadOutputSchema = createMailOutputSchema(
+  z.object({
+    mirrorApplied: z.boolean(),
+    read: z.boolean(),
+    threadId: z.string(),
+  }),
+);
+
+export const archiveThreadOutputSchema = createMailOutputSchema(
+  z.object({
+    mirrorApplied: z.boolean(),
+    threadId: z.string(),
+  }),
+);
+
+export const createDraftOutputSchema = createMailOutputSchema(draftMutationDataSchema);
+
+export const updateDraftOutputSchema = createMailOutputSchema(draftMutationDataSchema);
+
+export const deleteDraftOutputSchema = createMailOutputSchema(
+  z.object({
+    draftId: z.string(),
+  }),
+);
+
+export const listDraftsOutputSchema = createMailOutputSchema(
+  z.object({
+    drafts: z.array(draftMutationDataSchema),
+  }),
+);
+
+export const getThreadOutputSchema = createMailOutputSchema(
+  z.object({
+    messages: z.array(mailMessageSchema),
+  }),
+);
 
 export type MailMessage = z.infer<typeof mailMessageSchema>;
 export type MailboxData = z.infer<typeof mailboxDataSchema>;

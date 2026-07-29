@@ -16,7 +16,7 @@ export const mailErrors = defineErrorCatalog("mail", {
     status: 200,
     message: "Gmail account not connected",
     why: "The signed-in user does not have a connected Google account access token",
-    fix: "Reconnect the Google account with Gmail read and send scopes",
+    fix: "Reconnect the Google account with the Gmail access (gmail.modify) scope",
     internal: {
       dependency: "better-auth",
       dependencyOperation: "getAccessToken",
@@ -38,7 +38,7 @@ export const mailErrors = defineErrorCatalog("mail", {
     status: 200,
     message: "Gmail scope missing",
     why: "The connected Google account did not grant a required Gmail API scope",
-    fix: "Reconnect Google and approve the requested Gmail read and send scopes",
+    fix: "Reconnect Google and approve the requested Gmail access (gmail.modify) scope",
     internal: {
       dependency: "better-auth",
       dependencyOperation: "getAccessToken",
@@ -199,6 +199,105 @@ export const mailErrors = defineErrorCatalog("mail", {
       module: "mail",
     },
   },
+  GMAIL_CREATE_DRAFT_FAILED: {
+    status: 200,
+    message: "Gmail draft create failed",
+    why: "Gmail drafts.create failed while saving a new draft message",
+    fix: "Check draft MIME payload, response status, and Gmail access (gmail.modify) scope",
+    internal: {
+      dependency: "gmail",
+      dependencyOperation: "drafts.create",
+      module: "mail",
+    },
+  },
+  GMAIL_CREATE_DRAFT_RESPONSE_INVALID: {
+    status: 200,
+    message: "Gmail draft create response invalid",
+    why: "Gmail drafts.create returned a response that did not match the expected draft contract",
+    fix: "Check Gmail drafts.create response shape and parser fixture for this request",
+    internal: {
+      dependency: "gmail",
+      dependencyOperation: "drafts.create",
+      module: "mail",
+    },
+  },
+  GMAIL_UPDATE_DRAFT_FAILED: {
+    status: 200,
+    message: "Gmail draft update failed",
+    why: "Gmail drafts.update failed while replacing an existing draft message",
+    fix: "Check draft id, draft MIME payload, response status, and Gmail access (gmail.modify) scope",
+    internal: {
+      dependency: "gmail",
+      dependencyOperation: "drafts.update",
+      module: "mail",
+    },
+  },
+  GMAIL_UPDATE_DRAFT_RESPONSE_INVALID: {
+    status: 200,
+    message: "Gmail draft update response invalid",
+    why: "Gmail drafts.update returned a response that did not match the expected draft contract",
+    fix: "Check Gmail drafts.update response shape and parser fixture for this request",
+    internal: {
+      dependency: "gmail",
+      dependencyOperation: "drafts.update",
+      module: "mail",
+    },
+  },
+  GMAIL_DELETE_DRAFT_FAILED: {
+    status: 200,
+    message: "Gmail draft delete failed",
+    why: "Gmail drafts.delete failed while discarding a draft message",
+    fix: "Check draft id, response status, and Gmail access (gmail.modify) scope",
+    internal: {
+      dependency: "gmail",
+      dependencyOperation: "drafts.delete",
+      module: "mail",
+    },
+  },
+  GMAIL_LIST_DRAFTS_FAILED: {
+    status: 200,
+    message: "Gmail draft list failed",
+    why: "Gmail drafts.list failed while loading mailbox drafts",
+    fix: "Check Gmail drafts response status and OAuth mailbox access for this request",
+    internal: {
+      dependency: "gmail",
+      dependencyOperation: "drafts.list",
+      module: "mail",
+    },
+  },
+  GMAIL_LIST_DRAFTS_RESPONSE_INVALID: {
+    status: 200,
+    message: "Gmail draft list response invalid",
+    why: "Gmail drafts.list returned a response that did not match the expected list contract",
+    fix: "Check Gmail drafts.list response shape and parser fixture for this request",
+    internal: {
+      dependency: "gmail",
+      dependencyOperation: "drafts.list",
+      module: "mail",
+    },
+  },
+  GMAIL_MODIFY_THREAD_FAILED: {
+    status: 200,
+    message: "Gmail thread update failed",
+    why: "Gmail threads.modify failed while changing thread labels",
+    fix: "Check Gmail thread id, label ids, response status, and Gmail access (gmail.modify) scope",
+    internal: {
+      dependency: "gmail",
+      dependencyOperation: "threads.modify",
+      module: "mail",
+    },
+  },
+  GMAIL_MODIFY_THREAD_RESPONSE_INVALID: {
+    status: 200,
+    message: "Gmail thread update response invalid",
+    why: "Gmail threads.modify returned a response that did not match the expected thread contract",
+    fix: "Check Gmail threads.modify response shape and parser fixture for this request",
+    internal: {
+      dependency: "gmail",
+      dependencyOperation: "threads.modify",
+      module: "mail",
+    },
+  },
   GMAIL_SEND_MESSAGE_FAILED: {
     status: 200,
     message: "Gmail send failed",
@@ -262,6 +361,17 @@ export const mailErrors = defineErrorCatalog("mail", {
     internal: {
       dependency: "gmail",
       dependencyOperation: "users.watch",
+      module: "mail",
+    },
+  },
+  MAIL_SYNC_REPOSITORY_MISSING: {
+    status: 200,
+    message: "Mailbox temporarily unavailable",
+    why: "The authenticated request context was built without the mail sync repository that cached-mirror writes require",
+    fix: "Wire createPrismaMailSyncRepository into the authenticated route context (see apps/web rpc route)",
+    internal: {
+      dependency: "prisma",
+      dependencyOperation: "mailSyncRepository",
       module: "mail",
     },
   },

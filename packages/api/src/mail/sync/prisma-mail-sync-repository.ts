@@ -28,6 +28,8 @@ import type { MailSyncRepository as ProcessorMailSyncRepository } from "./proces
 const gmailProviderId = "google";
 const gmailMailboxScopeId = "mailbox";
 const gmailThreadTransactionTimeoutMs = 120_000;
+const inboxProviderLabelId = "INBOX";
+const unreadProviderLabelId = "UNREAD";
 const systemLabelIds = new Set([
   "CATEGORY_FORUMS",
   "CATEGORY_PERSONAL",
@@ -72,6 +74,38 @@ type MailSyncTransactionClient = {
 export type MailSyncThreadApplyClient = {
   $transaction<Result>(
     callback: (client: MailSyncTransactionClient) => Promise<Result>,
+    options?: { readonly timeout?: number },
+  ): Promise<Result>;
+};
+
+// Structural subset of the Prisma interactive transaction client that the
+// cached-mirror writers (markCachedThread*) touch. Same seam idea as
+// MailSyncTransactionClient above: argument types stay pinned to Prisma while
+// narrowed return shapes let unit tests supply a typed in-memory double.
+type MailMirrorTransactionClient = {
+  readonly mailLabel: {
+    upsert(args: Prisma.MailLabelUpsertArgs): Promise<{ readonly id: string }>;
+  };
+  readonly mailMessage: {
+    findMany(args: Prisma.MailMessageFindManyArgs): Promise<readonly { readonly id: string }[]>;
+  };
+  readonly mailMessageLabel: {
+    createMany(args: Prisma.MailMessageLabelCreateManyArgs): Promise<unknown>;
+    deleteMany(args: Prisma.MailMessageLabelDeleteManyArgs): Promise<unknown>;
+  };
+  readonly mailThread: {
+    findMany(
+      args: Prisma.MailThreadFindManyArgs,
+    ): Promise<readonly { readonly id: string; readonly mailAccountId: string }[]>;
+    updateMany(args: Prisma.MailThreadUpdateManyArgs): Promise<unknown>;
+  };
+};
+
+// The single Prisma capability the cached-mirror writers depend on; the full
+// PrismaClient stays structurally assignable, mirroring MailSyncThreadApplyClient.
+export type MailMirrorWriteClient = {
+  $transaction<Result>(
+    callback: (client: MailMirrorTransactionClient) => Promise<Result>,
     options?: { readonly timeout?: number },
   ): Promise<Result>;
 };
@@ -123,6 +157,10 @@ function createEffectMailSyncRepository(client: PrismaClient) {
       wrapPrismaRequest(() => repository.getActiveMailAccountWithCursor(...args)),
     getCachedMailboxData: (...args) =>
       wrapPrismaRequest(() => repository.getCachedMailboxData(...args)),
+    markCachedThreadArchived: (...args) =>
+      wrapPrismaRequest(() => repository.markCachedThreadArchived(...args)),
+    markCachedThreadReadState: (...args) =>
+      wrapPrismaRequest(() => repository.markCachedThreadReadState(...args)),
     markGmailMailboxActivity: (...args) =>
       wrapPrismaRequest(() => repository.markGmailMailboxActivity(...args)),
     markGmailThreadDeleted: (...args) =>
@@ -244,6 +282,15 @@ export function createPrismaMailSyncRepository(client: PrismaClient = prisma) {
           ],
         },
       }),
+    markCachedThreadArchived: async (input: {
+      readonly threadId: string;
+      readonly userId: string;
+    }) => markCachedThreadArchivedWithClient(client, input),
+    markCachedThreadReadState: async (input: {
+      readonly read: boolean;
+      readonly threadId: string;
+      readonly userId: string;
+    }) => markCachedThreadReadStateWithClient(client, input),
     markMailAccountAuthError: async (mailAccountId: string) => {
       await client.mailAccount.update({
         data: {
@@ -349,6 +396,15 @@ export function createPrismaMailSyncRepository(client: PrismaClient = prisma) {
       readonly activeSince: Date;
       readonly expiresBefore: Date;
     }) => Promise<readonly { readonly id: string }[]>;
+    readonly markCachedThreadArchived: (input: {
+      readonly threadId: string;
+      readonly userId: string;
+    }) => Promise<void>;
+    readonly markCachedThreadReadState: (input: {
+      readonly read: boolean;
+      readonly threadId: string;
+      readonly userId: string;
+    }) => Promise<void>;
     readonly markMailAccountAuthError: (mailAccountId: string) => Promise<void>;
     readonly markMailAccountNeedsResync: (mailAccountId: string) => Promise<void>;
     readonly markGmailMailboxActivity: (userId: string) => Promise<void>;
@@ -595,6 +651,113 @@ function hasCachedMailboxThreads<T extends { readonly threads: readonly unknown[
   mailAccount: T | null,
 ): mailAccount is T {
   return Boolean(mailAccount?.threads?.length);
+}
+
+// Threads are keyed by (mailAccountId, providerThreadId); scoping mirror writes
+// by provider + userId keeps one user's write from ever touching another user's
+// cached copy of the same Gmail thread id.
+function getMirrorThreadScopeWhere(input: { readonly threadId: string; readonly userId: string }) {
+  return {
+    mailAccount: {
+      provider: MailProvider.GMAIL,
+      userId: input.userId,
+    },
+    providerThreadId: input.threadId,
+  };
+}
+
+// Cached read state lives in two places that must agree: mailThread.isRead
+// (drives the unread-view filter) and the UNREAD label join rows on the
+// thread's messages (drive the per-message `read` flag). Update both.
+export async function markCachedThreadReadStateWithClient(
+  client: MailMirrorWriteClient,
+  input: { readonly read: boolean; readonly threadId: string; readonly userId: string },
+) {
+  await client.$transaction(async (tx) => {
+    const threadScopeWhere = getMirrorThreadScopeWhere(input);
+
+    await tx.mailThread.updateMany({
+      data: { isRead: input.read },
+      where: threadScopeWhere,
+    });
+
+    if (input.read) {
+      await tx.mailMessageLabel.deleteMany({
+        where: {
+          label: { providerLabelId: unreadProviderLabelId },
+          message: { mailThread: threadScopeWhere },
+        },
+      });
+      return;
+    }
+
+    await restoreUnreadLabelJoins(tx, threadScopeWhere);
+  });
+}
+
+// Gmail threads.modify applies label changes to every message in the thread,
+// so marking unread restores an UNREAD join on each cached message.
+async function restoreUnreadLabelJoins(
+  tx: MailMirrorTransactionClient,
+  threadScopeWhere: ReturnType<typeof getMirrorThreadScopeWhere>,
+) {
+  const threads = await tx.mailThread.findMany({
+    select: { id: true, mailAccountId: true },
+    where: threadScopeWhere,
+  });
+
+  for (const thread of threads) {
+    const unreadLabel = await tx.mailLabel.upsert({
+      create: {
+        mailAccountId: thread.mailAccountId,
+        name: unreadProviderLabelId,
+        providerLabelId: unreadProviderLabelId,
+        type: "system",
+      },
+      update: {},
+      where: {
+        mailAccountId_providerLabelId: {
+          mailAccountId: thread.mailAccountId,
+          providerLabelId: unreadProviderLabelId,
+        },
+      },
+    });
+    const messages = await tx.mailMessage.findMany({
+      select: { id: true },
+      where: { mailThreadId: thread.id },
+    });
+
+    await tx.mailMessageLabel.createMany({
+      data: messages.map((message) => ({
+        mailLabelId: unreadLabel.id,
+        mailMessageId: message.id,
+      })),
+      skipDuplicates: true,
+    });
+  }
+}
+
+// Archive mirrors Gmail's INBOX label removal: the mailThread.isInbox flag
+// drives the cached inbox/archive folder filters, and the INBOX label join
+// rows keep the cached label chips consistent with Gmail.
+export async function markCachedThreadArchivedWithClient(
+  client: MailMirrorWriteClient,
+  input: { readonly threadId: string; readonly userId: string },
+) {
+  await client.$transaction(async (tx) => {
+    const threadScopeWhere = getMirrorThreadScopeWhere(input);
+
+    await tx.mailThread.updateMany({
+      data: { isInbox: false },
+      where: threadScopeWhere,
+    });
+    await tx.mailMessageLabel.deleteMany({
+      where: {
+        label: { providerLabelId: inboxProviderLabelId },
+        message: { mailThread: threadScopeWhere },
+      },
+    });
+  });
 }
 
 export async function applyGmailThreadToClient(

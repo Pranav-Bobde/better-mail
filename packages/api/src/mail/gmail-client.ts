@@ -8,7 +8,10 @@ import {
   gmailHistoryListResponseSchema,
   gmailLabelResponseSchema,
   gmailLabelsListResponseSchema,
+  gmailDraftResponseSchema,
+  gmailListDraftsResponseSchema,
   gmailListThreadsResponseSchema,
+  gmailModifyThreadResponseSchema,
   gmailProfileResponseSchema,
   gmailSendResponseSchema,
   gmailThreadResponseSchema,
@@ -41,14 +44,19 @@ type GmailEffectRequest<Request extends (...args: never[]) => Promise<unknown>> 
 ) => Effect.Effect<Awaited<ReturnType<Request>>, EvlogError>;
 
 type GmailClientRequests = {
+  readonly createDraft: GmailEffectRequest<typeof createGmailDraft>;
+  readonly deleteDraft: GmailEffectRequest<typeof deleteGmailDraft>;
   readonly getLabel: GmailEffectRequest<typeof getGmailLabel>;
   readonly getProfile: GmailEffectRequest<typeof getGmailProfile>;
   readonly getThread: GmailEffectRequest<typeof getGmailThread>;
   readonly getThreadIfExists: GmailEffectRequest<typeof getGmailThreadIfExists>;
+  readonly listDrafts: GmailEffectRequest<typeof listGmailDrafts>;
   readonly listHistory: GmailEffectRequest<typeof listGmailHistory>;
   readonly listLabels: GmailEffectRequest<typeof listGmailLabels>;
   readonly listThreads: GmailEffectRequest<typeof listGmailThreads>;
+  readonly modifyThread: GmailEffectRequest<typeof modifyGmailThread>;
   readonly sendMessage: GmailEffectRequest<typeof sendGmailMessage>;
+  readonly updateDraft: GmailEffectRequest<typeof updateGmailDraft>;
   readonly watchMailbox: GmailEffectRequest<typeof watchGmailMailbox>;
 };
 
@@ -68,6 +76,12 @@ export class GmailClient extends Context.Service<GmailClient, GmailClientRequest
     // Services that depend on other services build with `Effect.gen` + `yield*`.
     Effect.sync(() =>
       GmailClient.of({
+        createDraft: Effect.fn("mail/GmailClient.createDraft")(function* (input) {
+          return yield* wrapGmailRequest(() => createGmailDraft(input));
+        }),
+        deleteDraft: Effect.fn("mail/GmailClient.deleteDraft")(function* (input) {
+          return yield* wrapGmailRequest(() => deleteGmailDraft(input));
+        }),
         getLabel: Effect.fn("mail/GmailClient.getLabel")(function* (accessToken, userId, labelId) {
           return yield* wrapGmailRequest(() => getGmailLabel(accessToken, userId, labelId));
         }),
@@ -86,6 +100,9 @@ export class GmailClient extends Context.Service<GmailClient, GmailClientRequest
             );
           },
         ),
+        listDrafts: Effect.fn("mail/GmailClient.listDrafts")(function* (accessToken, userId) {
+          return yield* wrapGmailRequest(() => listGmailDrafts(accessToken, userId));
+        }),
         listHistory: Effect.fn("mail/GmailClient.listHistory")(function* (input) {
           return yield* wrapGmailRequest(() => listGmailHistory(input));
         }),
@@ -95,8 +112,14 @@ export class GmailClient extends Context.Service<GmailClient, GmailClientRequest
         listThreads: Effect.fn("mail/GmailClient.listThreads")(function* (input) {
           return yield* wrapGmailRequest(() => listGmailThreads(input));
         }),
+        modifyThread: Effect.fn("mail/GmailClient.modifyThread")(function* (input) {
+          return yield* wrapGmailRequest(() => modifyGmailThread(input));
+        }),
         sendMessage: Effect.fn("mail/GmailClient.sendMessage")(function* (input) {
           return yield* wrapGmailRequest(() => sendGmailMessage(input));
+        }),
+        updateDraft: Effect.fn("mail/GmailClient.updateDraft")(function* (input) {
+          return yield* wrapGmailRequest(() => updateGmailDraft(input));
         }),
         watchMailbox: Effect.fn("mail/GmailClient.watchMailbox")(function* (input) {
           return yield* wrapGmailRequest(() => watchGmailMailbox(input));
@@ -277,6 +300,210 @@ export async function getGmailLabel(accessToken: string, userId: string, labelId
       cause,
       internal: {
         labelId,
+        userId,
+      },
+    }),
+  );
+}
+
+export async function createGmailDraft({
+  accessToken,
+  raw,
+  threadId,
+  userId,
+}: {
+  readonly accessToken: string;
+  readonly raw: string;
+  readonly threadId?: string;
+  readonly userId: string;
+}) {
+  const response = await fetchGmail(accessToken, `/users/${encodeURIComponent(userId)}/drafts`, {
+    body: JSON.stringify(createGmailDraftBody(raw, threadId)),
+    headers: {
+      "content-type": "application/json",
+    },
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    throw mailErrors.GMAIL_CREATE_DRAFT_FAILED({
+      cause: new Error(`Gmail drafts.create endpoint returned HTTP ${response.status}`),
+      internal: {
+        dependencyStatus: response.status,
+        hasThreadId: Boolean(threadId),
+        userId,
+      },
+    });
+  }
+
+  return decodeGmailResponse(gmailDraftResponseSchema, await response.json(), (cause) =>
+    mailErrors.GMAIL_CREATE_DRAFT_RESPONSE_INVALID({
+      cause,
+      internal: {
+        userId,
+      },
+    }),
+  );
+}
+
+export async function updateGmailDraft({
+  accessToken,
+  draftId,
+  raw,
+  threadId,
+  userId,
+}: {
+  readonly accessToken: string;
+  readonly draftId: string;
+  readonly raw: string;
+  readonly threadId?: string;
+  readonly userId: string;
+}) {
+  const path = `/users/${encodeURIComponent(userId)}/drafts/${encodeURIComponent(draftId)}`;
+  const response = await fetchGmail(accessToken, path, {
+    body: JSON.stringify(createGmailDraftBody(raw, threadId)),
+    headers: {
+      "content-type": "application/json",
+    },
+    method: "PUT",
+  });
+
+  if (!response.ok) {
+    throw mailErrors.GMAIL_UPDATE_DRAFT_FAILED({
+      cause: new Error(`Gmail drafts.update endpoint returned HTTP ${response.status}`),
+      internal: {
+        dependencyStatus: response.status,
+        draftId,
+        userId,
+      },
+    });
+  }
+
+  return decodeGmailResponse(gmailDraftResponseSchema, await response.json(), (cause) =>
+    mailErrors.GMAIL_UPDATE_DRAFT_RESPONSE_INVALID({
+      cause,
+      internal: {
+        draftId,
+        userId,
+      },
+    }),
+  );
+}
+
+// Gmail rejects a null threadId, so the message carries the key only when set.
+function createGmailDraftBody(raw: string, threadId: string | undefined) {
+  return {
+    message: {
+      raw,
+      ...(threadId ? { threadId } : {}),
+    },
+  };
+}
+
+export async function deleteGmailDraft({
+  accessToken,
+  draftId,
+  userId,
+}: {
+  readonly accessToken: string;
+  readonly draftId: string;
+  readonly userId: string;
+}) {
+  const path = `/users/${encodeURIComponent(userId)}/drafts/${encodeURIComponent(draftId)}`;
+  const response = await fetchGmail(accessToken, path, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    throw mailErrors.GMAIL_DELETE_DRAFT_FAILED({
+      cause: new Error(`Gmail drafts.delete endpoint returned HTTP ${response.status}`),
+      internal: {
+        dependencyStatus: response.status,
+        draftId,
+        userId,
+      },
+    });
+  }
+
+  // drafts.delete succeeds with 204 No Content and an empty body, so there is
+  // nothing to JSON-parse; echo the draft id for the caller's envelope.
+  return {
+    draftId,
+  };
+}
+
+export async function listGmailDrafts(accessToken: string, userId: string) {
+  const response = await fetchGmail(accessToken, `/users/${encodeURIComponent(userId)}/drafts`);
+
+  if (!response.ok) {
+    throw mailErrors.GMAIL_LIST_DRAFTS_FAILED({
+      cause: new Error(`Gmail drafts.list endpoint returned HTTP ${response.status}`),
+      internal: {
+        dependencyStatus: response.status,
+        userId,
+      },
+    });
+  }
+
+  const parsedDrafts = decodeGmailResponse(
+    gmailListDraftsResponseSchema,
+    await response.json(),
+    (cause) =>
+      mailErrors.GMAIL_LIST_DRAFTS_RESPONSE_INVALID({
+        cause,
+        internal: {
+          userId,
+        },
+      }),
+  );
+
+  return parsedDrafts.drafts ?? [];
+}
+
+export async function modifyGmailThread({
+  accessToken,
+  addLabelIds,
+  removeLabelIds,
+  threadId,
+  userId,
+}: {
+  readonly accessToken: string;
+  readonly addLabelIds?: readonly string[];
+  readonly removeLabelIds?: readonly string[];
+  readonly threadId: string;
+  readonly userId: string;
+}) {
+  const path = `/users/${encodeURIComponent(userId)}/threads/${encodeURIComponent(
+    threadId,
+  )}/modify`;
+  const response = await fetchGmail(accessToken, path, {
+    // Gmail rejects null label arrays, so the body carries only provided lists.
+    body: JSON.stringify({
+      ...(addLabelIds ? { addLabelIds } : {}),
+      ...(removeLabelIds ? { removeLabelIds } : {}),
+    }),
+    headers: {
+      "content-type": "application/json",
+    },
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    throw mailErrors.GMAIL_MODIFY_THREAD_FAILED({
+      cause: new Error(`Gmail threads.modify endpoint returned HTTP ${response.status}`),
+      internal: {
+        dependencyStatus: response.status,
+        threadId,
+        userId,
+      },
+    });
+  }
+
+  return decodeGmailResponse(gmailModifyThreadResponseSchema, await response.json(), (cause) =>
+    mailErrors.GMAIL_MODIFY_THREAD_RESPONSE_INVALID({
+      cause,
+      internal: {
+        threadId,
         userId,
       },
     }),
