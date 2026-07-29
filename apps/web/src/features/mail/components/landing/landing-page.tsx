@@ -186,6 +186,8 @@ const FOOTER_PRODUCT = [
   { label: "Features", href: "#features" },
   { label: "Roadmap", href: "#roadmap" },
   { label: "Join the waitlist", href: "#waitlist" },
+  { label: "Privacy", href: "/privacy" },
+  { label: "Terms", href: "/terms" },
 ];
 const FOOTER_OSS = [
   { label: "Source code", href: "https://github.com/Pranav-Bobde/better-mail" },

@@ -46,6 +46,13 @@ export function LoginForm() {
           Continue with Google
         </Button>
         {error ? <p className="text-center text-xs text-destructive">{error}</p> : null}
+        <p className="text-center text-xs text-muted-foreground">
+          Gmail data is handled per our{" "}
+          <a className="underline underline-offset-4 hover:no-underline" href="/privacy">
+            Privacy Policy
+          </a>
+          , including Google API Limited Use requirements.
+        </p>
       </CardContent>
     </Card>
   );
