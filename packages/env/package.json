@@ -6,6 +6,7 @@
   "exports": {
     "./server": "./src/server.ts",
     "./server-schema": "./src/server-schema.ts",
+    "./test-env": "./src/test-env.ts",
     "./web": "./src/web.ts"
   },
   "scripts": {

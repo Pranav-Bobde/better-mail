@@ -1,14 +1,13 @@
 import path from "node:path";
 
-import dotenv from "dotenv";
 import { defineConfig, env } from "prisma/config";
 
-for (const envFile of [".env.local", ".env.development.local"]) {
-  dotenv.config({
-    override: true,
-    path: path.join("../../apps/web", envFile),
-  });
-}
+import { loadPrismaCliDatabaseEnv } from "./src/prisma-config-env";
+
+// DATABASE_URL: an explicit process env value always wins; otherwise
+// apps/web/.env.local supplies the Neon dev branch. NODE_ENV=test refuses the
+// dotenv fallback and demands an explicit DATABASE_URL — see the helper.
+loadPrismaCliDatabaseEnv();
 
 export default defineConfig({
   schema: path.join("prisma", "schema"),

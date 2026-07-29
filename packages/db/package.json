@@ -11,6 +11,7 @@
   },
   "scripts": {
     "check-types": "tsc --noEmit",
+    "test": "tsx --test src/**/*.test.ts",
     "guard:db": "node scripts/guard-prod-db.mjs",
     "db:push": "node scripts/guard-prod-db.mjs && prisma db push",
     "db:generate": "prisma generate",
