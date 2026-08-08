@@ -13,7 +13,7 @@ export default async function LoginPage() {
     redirect("/");
   }
 
-  // Public sign-in stays closed; stable staging exposes owner-only OAuth.
+  // Public sign-in stays closed; stable staging and production expose owner-only OAuth.
   if (!isSignInPageEnabled(env.BETTER_AUTH_URL)) {
     redirect("/");
   }

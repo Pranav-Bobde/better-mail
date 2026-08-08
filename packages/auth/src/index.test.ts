@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { setRequiredTestEnv } from "@code-main/env/test-env";
 
-import { ownerOnlyStagingOrigin } from "./staging-access";
+import { ownerOnlyStagingOrigin } from "./prelaunch-access";
 
 // Must run before importing ./index, which validates the server env schema at
 // module load — hence the dynamic import inside the test.

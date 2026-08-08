@@ -5,7 +5,7 @@ import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
 
 import { createDeleteUserConfig } from "./delete-user-cleanup";
-import { filterSessionForAuthAccess, mapGoogleProfileForAuthAccess } from "./staging-access";
+import { filterSessionForAuthAccess, mapGoogleProfileForAuthAccess } from "./prelaunch-access";
 
 // gmail.modify is Google's documented superset of the previous readonly+send
 // pair (it does NOT include permanent delete) and unlocks thread label and
