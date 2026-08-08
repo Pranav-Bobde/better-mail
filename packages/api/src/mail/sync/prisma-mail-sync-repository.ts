@@ -23,11 +23,14 @@ import {
   parseGmailEmailAddress,
 } from "../gmail-message-utils";
 import type { GmailMessage, GmailThread } from "../gmail-schemas";
+import { isPrismaTransactionWriteConflict } from "./prisma-errors";
 import type { MailSyncRepository as ProcessorMailSyncRepository } from "./processor";
 
 const gmailProviderId = "google";
 const gmailMailboxScopeId = "mailbox";
 const gmailThreadTransactionTimeoutMs = 120_000;
+const gmailThreadTransactionMaxAttempts = 5;
+const gmailThreadTransactionRetryBaseDelayMs = 20;
 const inboxProviderLabelId = "INBOX";
 const unreadProviderLabelId = "UNREAD";
 const systemLabelIds = new Set([
@@ -866,85 +869,107 @@ export async function applyGmailThreadToClient(
     ? parseGmailHistoryId(input.thread.historyId)
     : null;
 
-  await client.$transaction(
-    async (tx) => {
-      const existingThread = await tx.mailThread.findUnique({
-        select: { providerHistoryId: true },
-        where: {
-          mailAccountId_providerThreadId: {
-            mailAccountId: input.mailAccountId,
-            providerThreadId: input.threadId,
+  await retryGmailThreadTransaction(() =>
+    client.$transaction(
+      async (tx) => {
+        const existingThread = await tx.mailThread.findUnique({
+          select: { providerHistoryId: true },
+          where: {
+            mailAccountId_providerThreadId: {
+              mailAccountId: input.mailAccountId,
+              providerThreadId: input.threadId,
+            },
           },
-        },
-      });
-
-      if (
-        !shouldApplyGmailThreadSnapshot(
-          existingThread?.providerHistoryId ?? null,
-          input.thread.historyId,
-        )
-      ) {
-        return;
-      }
-
-      const mailThread = await tx.mailThread.upsert({
-        create: {
-          ...threadFlags,
-          latestMessageAt: getGmailMessageDate(latestMessage),
-          mailAccountId: input.mailAccountId,
-          messageCount: input.thread.messages.length,
-          ...(providerHistoryId === null ? {} : { providerHistoryId }),
-          providerThreadId: input.threadId,
-        },
-        update: {
-          ...threadFlags,
-          deletedAt: null,
-          latestMessageAt: getGmailMessageDate(latestMessage),
-          messageCount: input.thread.messages.length,
-          ...(providerHistoryId === null ? {} : { providerHistoryId }),
-        },
-        where: {
-          mailAccountId_providerThreadId: {
-            mailAccountId: input.mailAccountId,
-            providerThreadId: input.threadId,
-          },
-        },
-      });
-
-      for (const message of input.thread.messages) {
-        await upsertGmailMessage(tx, {
-          labelCatalog: input.labelCatalog,
-          mailAccountId: input.mailAccountId,
-          mailThreadId: mailThread.id,
-          message,
         });
-      }
 
-      const internalLatestMessage = await tx.mailMessage.findUnique({
-        where: {
-          mailAccountId_providerMessageId: {
+        if (
+          !shouldApplyGmailThreadSnapshot(
+            existingThread?.providerHistoryId ?? null,
+            input.thread.historyId,
+          )
+        ) {
+          return;
+        }
+
+        const mailThread = await tx.mailThread.upsert({
+          create: {
+            ...threadFlags,
+            latestMessageAt: getGmailMessageDate(latestMessage),
             mailAccountId: input.mailAccountId,
-            providerMessageId: input.latestMessageId,
+            messageCount: input.thread.messages.length,
+            ...(providerHistoryId === null ? {} : { providerHistoryId }),
+            providerThreadId: input.threadId,
           },
-        },
-      });
-
-      if (internalLatestMessage) {
-        await tx.mailThread.update({
-          data: {
-            latestMessageId: internalLatestMessage.id,
+          update: {
+            ...threadFlags,
+            deletedAt: null,
+            latestMessageAt: getGmailMessageDate(latestMessage),
+            messageCount: input.thread.messages.length,
+            ...(providerHistoryId === null ? {} : { providerHistoryId }),
           },
           where: {
-            id: mailThread.id,
+            mailAccountId_providerThreadId: {
+              mailAccountId: input.mailAccountId,
+              providerThreadId: input.threadId,
+            },
           },
         });
-      }
-    },
-    {
-      isolationLevel: "Serializable",
-      timeout: gmailThreadTransactionTimeoutMs,
-    },
+
+        for (const message of input.thread.messages) {
+          await upsertGmailMessage(tx, {
+            labelCatalog: input.labelCatalog,
+            mailAccountId: input.mailAccountId,
+            mailThreadId: mailThread.id,
+            message,
+          });
+        }
+
+        const internalLatestMessage = await tx.mailMessage.findUnique({
+          where: {
+            mailAccountId_providerMessageId: {
+              mailAccountId: input.mailAccountId,
+              providerMessageId: input.latestMessageId,
+            },
+          },
+        });
+
+        if (internalLatestMessage) {
+          await tx.mailThread.update({
+            data: {
+              latestMessageId: internalLatestMessage.id,
+            },
+            where: {
+              id: mailThread.id,
+            },
+          });
+        }
+      },
+      {
+        isolationLevel: "Serializable",
+        timeout: gmailThreadTransactionTimeoutMs,
+      },
+    ),
   );
+}
+
+async function retryGmailThreadTransaction(request: () => Promise<unknown>) {
+  for (let attempt = 1; attempt <= gmailThreadTransactionMaxAttempts; attempt += 1) {
+    try {
+      await request();
+      return;
+    } catch (error) {
+      if (
+        !isPrismaTransactionWriteConflict(error) ||
+        attempt === gmailThreadTransactionMaxAttempts
+      ) {
+        throw error;
+      }
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, gmailThreadTransactionRetryBaseDelayMs * 2 ** (attempt - 1)),
+      );
+    }
+  }
 }
 
 export function shouldApplyGmailThreadSnapshot(

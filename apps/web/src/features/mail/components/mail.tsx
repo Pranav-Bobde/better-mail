@@ -813,15 +813,17 @@ function MailboxListContent({
 }
 
 function MailboxErrorState({ message }: { readonly message: string }) {
+  const presentation = getMutationErrorPresentation(message);
+
   return (
     <div className="flex h-full items-center justify-center p-6">
       <div className="grid max-w-xs gap-3 rounded-lg border bg-background p-4 text-center">
         <AlertCircle className="mx-auto size-5 text-muted-foreground" />
         <div className="grid gap-1">
-          <p className="text-sm font-medium">Gmail needs reconnect</p>
-          <p className="text-xs text-muted-foreground">{message}</p>
+          <p className="text-sm font-medium">{presentation.title}</p>
+          <p className="text-xs text-muted-foreground">{presentation.message}</p>
         </div>
-        <ReconnectGoogleButton />
+        {presentation.kind === "reconnect" ? <ReconnectGoogleButton /> : null}
       </div>
     </div>
   );

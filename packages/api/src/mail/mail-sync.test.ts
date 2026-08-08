@@ -891,6 +891,26 @@ test("uses a serializable transaction and serverless-safe timeout for Gmail thre
   assert.deepEqual(transactionOptions, [{ isolationLevel: "Serializable", timeout: 120000 }]);
 });
 
+test("retries observed Prisma P2034 write conflicts around the whole thread transaction", async () => {
+  const transactionOptions: unknown[] = [];
+  const transactionErrors = [createObservedP2034Error(), createObservedP2034Error()];
+  const repositoryLayer = createThreadApplyRepositoryLayer(
+    createPrismaClientForThreadApplyTest(transactionOptions, [], transactionErrors),
+  );
+
+  await runWithMailSyncRepositoryLayer(repositoryLayer, (repository) =>
+    repository.applyGmailThread({
+      latestMessageId: "message-2",
+      mailAccountId: "mail-account-id",
+      thread: createRealShapedGmailThread(),
+      threadId: "thread-1",
+    }),
+  );
+
+  assert.equal(transactionErrors.length, 0);
+  assert.equal(transactionOptions.length, 3);
+});
+
 test("marks mail account for resync when Gmail history cursor expired", async () => {
   const mutableOperations: string[] = [];
   const mutableLogs: unknown[] = [];
@@ -1168,6 +1188,7 @@ async function runWithMailSyncRepositoryLayer<A, E>(
 function createPrismaClientForThreadApplyTest(
   transactionOptions: unknown[],
   labelWrites: unknown[] = [],
+  transactionErrors: unknown[] = [],
 ) {
   const transactionClient: TestMailSyncTransactionClient = {
     mailLabel: {
@@ -1213,9 +1234,32 @@ function createPrismaClientForThreadApplyTest(
       },
     ) => {
       transactionOptions.push(options);
+      const transactionError = transactionErrors.shift();
+      if (transactionError) {
+        throw transactionError;
+      }
       return callback(transactionClient);
     },
   } satisfies MailSyncThreadApplyClient;
+}
+
+function createObservedP2034Error() {
+  return Object.assign(new Error("Transaction failed due to a write conflict"), {
+    clientVersion: "7.8.0",
+    code: "P2034",
+    meta: {
+      driverAdapterError: {
+        cause: {
+          kind: "TransactionWriteConflict",
+          originalCode: "40001",
+          originalMessage: "could not serialize access due to concurrent update",
+        },
+        name: "DriverAdapterError",
+      },
+      modelName: "MailLabel",
+    },
+    name: "PrismaClientKnownRequestError",
+  });
 }
 
 function createGmailSyncProvider({

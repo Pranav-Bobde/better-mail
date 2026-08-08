@@ -45,6 +45,17 @@ export const mailErrors = defineErrorCatalog("mail", {
       module: "mail",
     },
   },
+  MAIL_CACHE_WRITE_CONFLICT: {
+    status: 200,
+    message: "Mailbox cache write conflicted",
+    why: "Concurrent mailbox cache transactions exhausted bounded retries after Prisma P2034",
+    fix: "Inspect overlapping full sync, incremental sync, and mutation cache writes for this account",
+    internal: {
+      dependency: "prisma",
+      dependencyOperation: "mailCacheTransaction",
+      module: "mail",
+    },
+  },
   GMAIL_GET_DRAFT_FAILED: {
     status: 200,
     message: "Gmail draft read failed",

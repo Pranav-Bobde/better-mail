@@ -20,8 +20,14 @@ import { setRequiredTestEnv } from "../test-env";
 
 setRequiredTestEnv();
 
-const { MailboxService, getMailboxData, getThreadData, sendMailboxMessage, toMailMessage } =
-  await import("./mailbox-service");
+const {
+  MailboxService,
+  getMailboxData,
+  getThreadData,
+  logMailboxError,
+  sendMailboxMessage,
+  toMailMessage,
+} = await import("./mailbox-service");
 const { GmailClient } = await import("./gmail-client");
 const { mailErrors } = await import("./errors");
 const { getMailboxOutputSchema, getThreadOutputSchema } = await import("./contracts");
@@ -31,6 +37,31 @@ const originalFetch = globalThis.fetch;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+});
+
+test("classifies an exhausted Prisma P2034 as a mailbox cache conflict, not Gmail auth", () => {
+  const errors: EvlogError[] = [];
+  const error = Object.assign(new Error("Transaction failed due to a write conflict"), {
+    clientVersion: "7.8.0",
+    code: "P2034",
+    meta: {
+      driverAdapterError: {
+        cause: {
+          kind: "TransactionWriteConflict",
+          originalCode: "40001",
+          originalMessage: "could not serialize access due to concurrent update",
+        },
+        name: "DriverAdapterError",
+      },
+      modelName: "MailLabel",
+    },
+    name: "PrismaClientKnownRequestError",
+  });
+
+  const mapped = logMailboxError({ error: (value) => errors.push(value) }, error, "getMailbox");
+
+  assert.equal(mapped.code, "mail.MAIL_CACHE_WRITE_CONFLICT");
+  assert.deepEqual(errors, [mapped]);
 });
 
 test("requires a signed-in user before fetching mailbox data", async () => {

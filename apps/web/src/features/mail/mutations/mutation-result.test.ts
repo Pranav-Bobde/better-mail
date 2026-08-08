@@ -27,6 +27,7 @@ test("scope-missing errors present as a reconnect prompt", () => {
   assert.deepEqual(presentation, {
     kind: "reconnect",
     message: "Gmail needs updated permissions",
+    title: "Gmail needs reconnect",
   });
 });
 
@@ -36,6 +37,17 @@ test("known catalog codes present their catalog message", () => {
   assert.deepEqual(presentation, {
     kind: "generic",
     message: mailErrors.GMAIL_MODIFY_THREAD_FAILED.message,
+    title: "Mailbox temporarily unavailable",
+  });
+});
+
+test("mailbox cache conflicts present as retryable failures, not reconnect prompts", () => {
+  const presentation = getMutationErrorPresentation("mail.MAIL_CACHE_WRITE_CONFLICT");
+
+  assert.deepEqual(presentation, {
+    kind: "generic",
+    message: "Mailbox cache write conflicted",
+    title: "Mailbox temporarily unavailable",
   });
 });
 
@@ -45,6 +57,7 @@ test("unknown codes fall back to a generic human message", () => {
   assert.deepEqual(presentation, {
     kind: "generic",
     message: "Something went wrong. Please try again.",
+    title: "Mailbox temporarily unavailable",
   });
 });
 

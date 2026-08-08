@@ -66,11 +66,13 @@ export function getMutationErrorPresentation(errorCode: string) {
     return {
       kind: "reconnect" as const,
       message: "Gmail needs updated permissions",
+      title: "Gmail needs reconnect",
     };
   }
 
   return {
     kind: "generic" as const,
     message: mailErrorMessagesByCode.get(errorCode) ?? fallbackErrorMessage,
+    title: "Mailbox temporarily unavailable",
   };
 }

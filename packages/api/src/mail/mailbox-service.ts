@@ -33,6 +33,7 @@ import {
 } from "./gmail-message-utils";
 import type { GmailLabel, GmailMessage, GmailThread } from "./gmail-schemas";
 import { getDisplayLabels } from "./label-presentation";
+import { isPrismaTransactionWriteConflict } from "./sync/prisma-errors";
 
 const mailboxMaxResults = 20;
 const mailboxSyncFreshnessWindowMs = 60_000;
@@ -1319,6 +1320,15 @@ function createLabelCatalog(labels: readonly GmailLabel[]) {
 function getMailboxEvlogError(error: unknown, operation: MailboxErrorOperation) {
   if (error instanceof EvlogError) {
     return error;
+  }
+
+  if (isPrismaTransactionWriteConflict(error)) {
+    return mailErrors.MAIL_CACHE_WRITE_CONFLICT({
+      cause: getErrorCause(error),
+      internal: {
+        operation,
+      },
+    });
   }
 
   return mailboxErrorByOperation[operation](getErrorCause(error));
