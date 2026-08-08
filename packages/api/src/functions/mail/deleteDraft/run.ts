@@ -3,7 +3,11 @@ import type { z } from "zod";
 
 import type { Context } from "../../../context";
 import { mailErrors } from "../../../mail/errors";
-import { MailboxService, logMailboxError } from "../../../mail/mailbox-service";
+import {
+  MailboxService,
+  logMailboxError,
+  requireMailMutationAuthContext,
+} from "../../../mail/mailbox-service";
 import { createRpcSuccessFields } from "../../../observability/rpc/fields";
 import { runRequest } from "../../../runtime";
 import type { deleteDraftInputSchema } from "./constants";
@@ -13,8 +17,11 @@ export async function runDeleteDraft(
   context: Context,
 ) {
   try {
+    const mutationContext = requireMailMutationAuthContext(context);
     const result = await runRequest(
-      Effect.flatMap(MailboxService, (service) => service.deleteMailboxDraft(input, context)),
+      Effect.flatMap(MailboxService, (service) =>
+        service.deleteMailboxDraft(input, mutationContext),
+      ),
     );
 
     context.log.set(createRpcSuccessFields("mail.deleteDraft"));

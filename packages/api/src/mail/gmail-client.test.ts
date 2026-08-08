@@ -197,6 +197,34 @@ layer(GmailClient.layer)("GmailClient", (it) => {
     }),
   );
 
+  it.effect("getDraft resolves the draft message and thread before deletion", () =>
+    Effect.gen(function* () {
+      const captured = captureGmailFetch(createGmailDraftResponse());
+
+      const client = yield* GmailClient;
+      const draft = yield* client.getDraft("draft-token", "me", gmailDraftTestIds.draftId);
+
+      assert.equal(draft.id, gmailDraftTestIds.draftId);
+      assert.equal(draft.message.threadId, gmailDraftTestIds.threadId);
+      assertGmailRequest(captured.requests[0], {
+        bearer: "draft-token",
+        method: "GET",
+        url: `https://gmail.googleapis.com/gmail/v1/users/me/drafts/${gmailDraftTestIds.draftId}`,
+      });
+    }),
+  );
+
+  it.effect("getDraftIfExists resolves null when Gmail reports an already-deleted draft", () =>
+    Effect.gen(function* () {
+      mockGmailFailureResponse(404);
+
+      const client = yield* GmailClient;
+      const draft = yield* client.getDraftIfExists("draft-token", "me", gmailDraftTestIds.draftId);
+
+      assert.equal(draft, null);
+    }),
+  );
+
   it.effect("createDraft omits threadId from the message body when absent", () =>
     Effect.gen(function* () {
       const captured = captureGmailFetch(createGmailDraftResponse());

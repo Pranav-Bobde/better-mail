@@ -46,6 +46,8 @@ type GmailEffectRequest<Request extends (...args: never[]) => Promise<unknown>> 
 type GmailClientRequests = {
   readonly createDraft: GmailEffectRequest<typeof createGmailDraft>;
   readonly deleteDraft: GmailEffectRequest<typeof deleteGmailDraft>;
+  readonly getDraft: GmailEffectRequest<typeof getGmailDraft>;
+  readonly getDraftIfExists: GmailEffectRequest<typeof getGmailDraftIfExists>;
   readonly getLabel: GmailEffectRequest<typeof getGmailLabel>;
   readonly getProfile: GmailEffectRequest<typeof getGmailProfile>;
   readonly getThread: GmailEffectRequest<typeof getGmailThread>;
@@ -82,6 +84,16 @@ export class GmailClient extends Context.Service<GmailClient, GmailClientRequest
         deleteDraft: Effect.fn("mail/GmailClient.deleteDraft")(function* (input) {
           return yield* wrapGmailRequest(() => deleteGmailDraft(input));
         }),
+        getDraft: Effect.fn("mail/GmailClient.getDraft")(function* (accessToken, userId, draftId) {
+          return yield* wrapGmailRequest(() => getGmailDraft(accessToken, userId, draftId));
+        }),
+        getDraftIfExists: Effect.fn("mail/GmailClient.getDraftIfExists")(
+          function* (accessToken, userId, draftId) {
+            return yield* wrapGmailRequest(() =>
+              getGmailDraftIfExists(accessToken, userId, draftId),
+            );
+          },
+        ),
         getLabel: Effect.fn("mail/GmailClient.getLabel")(function* (accessToken, userId, labelId) {
           return yield* wrapGmailRequest(() => getGmailLabel(accessToken, userId, labelId));
         }),
@@ -340,6 +352,49 @@ export async function createGmailDraft({
     mailErrors.GMAIL_CREATE_DRAFT_RESPONSE_INVALID({
       cause,
       internal: {
+        userId,
+      },
+    }),
+  );
+}
+
+export async function getGmailDraft(accessToken: string, userId: string, draftId: string) {
+  const response = await requestGmailDraft(accessToken, userId, draftId);
+  return parseGmailDraftResponse(response, userId, draftId);
+}
+
+export async function getGmailDraftIfExists(accessToken: string, userId: string, draftId: string) {
+  const response = await requestGmailDraft(accessToken, userId, draftId);
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  return parseGmailDraftResponse(response, userId, draftId);
+}
+
+async function requestGmailDraft(accessToken: string, userId: string, draftId: string) {
+  const path = `/users/${encodeURIComponent(userId)}/drafts/${encodeURIComponent(draftId)}`;
+  return fetchGmail(accessToken, path);
+}
+
+async function parseGmailDraftResponse(response: Response, userId: string, draftId: string) {
+  if (!response.ok) {
+    throw mailErrors.GMAIL_GET_DRAFT_FAILED({
+      cause: new Error(`Gmail drafts.get endpoint returned HTTP ${response.status}`),
+      internal: {
+        dependencyStatus: response.status,
+        draftId,
+        userId,
+      },
+    });
+  }
+
+  return decodeGmailResponse(gmailDraftResponseSchema, await response.json(), (cause) =>
+    mailErrors.GMAIL_GET_DRAFT_RESPONSE_INVALID({
+      cause,
+      internal: {
+        draftId,
         userId,
       },
     }),

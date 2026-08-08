@@ -400,6 +400,7 @@ export function createPrismaMailSyncRepository(client: PrismaClient = prisma) {
       readonly view: "all" | "unread";
     }) => Promise<{
       readonly data: Omit<MailboxData, "counts">;
+      readonly lastSuccessfulSyncAt: Date | null;
       readonly mailAccountId: string;
     } | null>;
     readonly findRecentlyActiveGmailMailAccountByEmail: (input: {
@@ -568,6 +569,17 @@ async function getCachedMailboxData(
 
   const mailAccount = await client.mailAccount.findFirst({
     include: {
+      cursors: {
+        select: {
+          updatedAt: true,
+        },
+        take: 1,
+        where: {
+          cursorKind: MailSyncCursorKind.GMAIL_HISTORY_ID,
+          providerScopeId: gmailMailboxScopeId,
+          scopeType: MailSyncScopeType.MAILBOX,
+        },
+      },
       threads: {
         include: {
           latestMessage: {
@@ -611,6 +623,7 @@ async function getCachedMailboxData(
       ),
       source: "gmail" as const,
     },
+    lastSuccessfulSyncAt: mailAccount.cursors[0]?.updatedAt ?? null,
     mailAccountId: mailAccount.id,
   };
 }
@@ -1102,10 +1115,15 @@ async function replaceGmailMessageLabels(
         providerLabelId: labelId,
         type: labelType,
       },
-      update: {
-        name: labelCatalogItem?.name ?? labelId,
-        type: labelType,
-      },
+      // Mutation reconciliation has no authoritative labels.list catalog.
+      // In that path, keep any existing custom label name/type instead of
+      // replacing account-wide metadata with the provider id fallback.
+      update: getGmailLabelMetadataUpdate({
+        hasCatalog: Boolean(input.labelCatalog),
+        labelCatalogItem,
+        labelId,
+        labelType,
+      }),
       where: {
         mailAccountId_providerLabelId: {
           mailAccountId: input.mailAccountId,
@@ -1121,6 +1139,22 @@ async function replaceGmailMessageLabels(
       },
     });
   }
+}
+
+function getGmailLabelMetadataUpdate(input: {
+  readonly hasCatalog: boolean;
+  readonly labelCatalogItem?: { readonly name: string; readonly type: string };
+  readonly labelId: string;
+  readonly labelType: string;
+}) {
+  if (!input.hasCatalog) {
+    return {};
+  }
+
+  return {
+    name: input.labelCatalogItem?.name ?? input.labelId,
+    type: input.labelType,
+  };
 }
 
 function getLabelType(labelId: string) {

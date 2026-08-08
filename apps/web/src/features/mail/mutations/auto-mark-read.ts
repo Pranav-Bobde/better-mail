@@ -5,10 +5,40 @@
 export function shouldAutoMarkThreadRead(
   selectedThread: { readonly read: boolean; readonly threadId: string } | null,
   lastAutoMarkedThreadId: string | null,
+  manualUnreadThreadIds: ReadonlySet<string> = new Set(),
 ) {
   if (!selectedThread || selectedThread.read) {
     return false;
   }
 
-  return selectedThread.threadId !== lastAutoMarkedThreadId;
+  return (
+    selectedThread.threadId !== lastAutoMarkedThreadId &&
+    !manualUnreadThreadIds.has(selectedThread.threadId)
+  );
+}
+
+export function setManualUnreadIntent(
+  current: ReadonlySet<string>,
+  threadId: string,
+  preserveUnread: boolean,
+) {
+  if (current.has(threadId) === preserveUnread) {
+    return current;
+  }
+
+  const next = new Set(current);
+  if (preserveUnread) {
+    next.add(threadId);
+  } else {
+    next.delete(threadId);
+  }
+  return next;
+}
+
+export function resetAutoMarkGuardForSelection(
+  selectedThreadId: string | null,
+  previousSelectedThreadId: string | null,
+  lastAutoMarkedThreadId: string | null,
+) {
+  return selectedThreadId === previousSelectedThreadId ? lastAutoMarkedThreadId : null;
 }

@@ -23,25 +23,39 @@ for (const catalogError of Object.values(mailErrors)) {
 
 const fallbackErrorMessage = "Something went wrong. Please try again.";
 
-// Write-through mail mutations report whether the local cache mirror was
-// updated alongside Gmail. `mirrorApplied: false` means Gmail accepted the
-// change but the mirror write failed after internal retries — the next
+// Write-through mail mutations report whether the local cache was
+// updated alongside Gmail. `cacheApplied: false` means Gmail accepted the
+// change but the cache write failed after internal retries — the next
 // history sync heals it, but until then a refetch can serve the stale rows.
-type MirrorWriteResult =
-  | { readonly data: { readonly mirrorApplied: boolean }; readonly status: "ok" }
+type CacheWriteResult =
+  | { readonly data: { readonly cacheApplied?: boolean }; readonly status: "ok" }
   | { readonly error: string; readonly status: "error" };
 
-const mirrorDeferredWarningMessage =
+const cacheDeferredWarningMessage =
   "Saved to Gmail, but this change may briefly reappear until your mailbox finishes syncing.";
 
-// An optimistic update must never silently revert: when the mirror write was
+// An optimistic update must never silently revert: when the cache write was
 // skipped, surface this warning as a toast next to the successful mutation.
-export function getMirrorWriteWarning(result: MirrorWriteResult) {
-  if (result.status === "ok" && !result.data.mirrorApplied) {
-    return mirrorDeferredWarningMessage;
+export function getCacheWriteWarning(
+  result: CacheWriteResult,
+  options: { readonly suppress?: boolean } = {},
+) {
+  if (!options.suppress && result.status === "ok" && result.data.cacheApplied === false) {
+    return cacheDeferredWarningMessage;
   }
 
   return null;
+}
+
+export function shouldInvalidateAfterCacheWrite(result: CacheWriteResult | undefined) {
+  return result?.status === "ok" && result.data.cacheApplied !== false;
+}
+
+// Draft create/update have no optimistic cache patch to preserve. Gmail is
+// authoritative, so refresh their lists after every accepted write even when
+// the direct cache write was deferred to history sync.
+export function shouldRefreshDraftQueriesAfterMutation(result: CacheWriteResult | undefined) {
+  return result?.status === "ok";
 }
 
 // Scope-missing means the user granted the legacy readonly+send scopes and has

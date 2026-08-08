@@ -69,6 +69,7 @@ export const updateDraftInputSchema = z.object({
 
 export const deleteDraftInputSchema = z.object({
   draftId: z.string().min(1),
+  threadId: z.string().min(1),
 });
 
 export const listDraftsInputSchema = z.object({});
@@ -118,27 +119,32 @@ const createMailOutputSchema = <Data extends z.ZodType>(data: Data) =>
     }),
   ]);
 
-const draftMutationDataSchema = z.object({
+const draftIdentityDataSchema = z.object({
   draftId: z.string(),
   messageId: z.string(),
   threadId: z.string(),
+});
+
+const draftMutationDataSchema = draftIdentityDataSchema.extend({
+  cacheApplied: z.boolean(),
 });
 
 export const getMailboxOutputSchema = createMailOutputSchema(mailboxDataSchema);
 
 export const sendMailOutputSchema = createMailOutputSchema(
   z.object({
+    cacheApplied: z.boolean(),
     messageId: z.string(),
     threadId: z.string(),
   }),
 );
 
-// mirrorApplied: false means Gmail accepted the change but the local cache
-// mirror could not be updated after internal retries — the UI must warn that
-// the change may briefly reappear until the next sync heals the mirror.
+// cacheApplied: false means Gmail accepted the change but the local cache
+// could not be updated after internal retries — the UI must warn that the
+// change may briefly reappear until the next sync heals the cache.
 export const setThreadReadOutputSchema = createMailOutputSchema(
   z.object({
-    mirrorApplied: z.boolean(),
+    cacheApplied: z.boolean(),
     read: z.boolean(),
     threadId: z.string(),
   }),
@@ -146,7 +152,7 @@ export const setThreadReadOutputSchema = createMailOutputSchema(
 
 export const archiveThreadOutputSchema = createMailOutputSchema(
   z.object({
-    mirrorApplied: z.boolean(),
+    cacheApplied: z.boolean(),
     threadId: z.string(),
   }),
 );
@@ -157,13 +163,15 @@ export const updateDraftOutputSchema = createMailOutputSchema(draftMutationDataS
 
 export const deleteDraftOutputSchema = createMailOutputSchema(
   z.object({
+    cacheApplied: z.boolean(),
     draftId: z.string(),
+    threadId: z.string(),
   }),
 );
 
 export const listDraftsOutputSchema = createMailOutputSchema(
   z.object({
-    drafts: z.array(draftMutationDataSchema),
+    drafts: z.array(draftIdentityDataSchema),
   }),
 );
 

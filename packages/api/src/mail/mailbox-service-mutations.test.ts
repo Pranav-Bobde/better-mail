@@ -10,9 +10,10 @@ import {
   createFakeMailSyncRepository,
   createGmailDraftResponse,
   createGmailModifyThreadResponse,
+  createGmailThreadResponse,
   createRecordingAuthLog,
   createSignedInGmailContext,
-  fakeMirrorWriteFailureMessage,
+  fakeCacheWriteFailureMessage,
   gmailDraftTestIds,
   gmailLegacyReadSendTestScopes,
   gmailModifyTestScopes,
@@ -32,7 +33,9 @@ const {
   deleteMailboxDraft,
   getMailboxData,
   listMailboxDrafts,
+  sendMailboxMessage,
   setMailboxThreadReadState,
+  shouldEnqueueCachedMailboxSync,
   updateMailboxDraft,
 } = await import("./mailbox-service");
 const { GmailClient } = await import("./gmail-client");
@@ -40,8 +43,10 @@ const { mailErrors } = await import("./errors");
 const {
   archiveThreadOutputSchema,
   createDraftOutputSchema,
+  deleteDraftInputSchema,
   deleteDraftOutputSchema,
   listDraftsOutputSchema,
+  sendMailOutputSchema,
   setThreadReadOutputSchema,
   updateDraftOutputSchema,
 } = await import("./contracts");
@@ -70,9 +75,32 @@ const unreadInboxThreadSeed = {
   threadId: gmailDraftTestIds.threadId,
 };
 
-// One unread inbox thread in the cached mirror plus a recording operator log —
-// the starting state shared by the write-through and mirror-failure tests.
-function createUnreadInboxMirrorFixture(options: { readonly mirrorWriteFailures?: number } = {}) {
+test("delete draft input requires the thread id used for idempotent reconciliation", () => {
+  assert.equal(
+    deleteDraftInputSchema.safeParse({
+      draftId: gmailDraftTestIds.draftId,
+      threadId: gmailDraftTestIds.threadId,
+    }).success,
+    true,
+  );
+  assert.equal(
+    deleteDraftInputSchema.safeParse({ draftId: gmailDraftTestIds.draftId }).success,
+    false,
+  );
+});
+
+test("cached mailbox sync enqueue uses a strict sliding 60-second freshness gate", () => {
+  const now = new Date("2026-07-31T18:30:00.000Z");
+
+  assert.equal(shouldEnqueueCachedMailboxSync(new Date("2026-07-31T18:29:00.001Z"), now), false);
+  assert.equal(shouldEnqueueCachedMailboxSync(new Date("2026-07-31T18:29:00.000Z"), now), true);
+  assert.equal(shouldEnqueueCachedMailboxSync(null, now), true);
+  assert.equal(shouldEnqueueCachedMailboxSync(new Date("2026-07-31T18:30:01.000Z"), now), false);
+});
+
+// One unread inbox thread in the cache plus a recording operator log — the
+// starting state shared by the write-through and cache-failure tests.
+function createUnreadInboxCacheFixture(options: { readonly cacheWriteFailures?: number } = {}) {
   const fakeRepository = createFakeMailSyncRepository({
     ...options,
     threads: [unreadInboxThreadSeed],
@@ -86,6 +114,34 @@ function createUnreadInboxMirrorFixture(options: { readonly mirrorWriteFailures?
   return { context, fakeRepository, recordingLog };
 }
 
+function captureGmailResponseSequence(
+  responses: readonly (
+    | { readonly json: unknown; readonly status?: number }
+    | { readonly status: number }
+  )[],
+) {
+  const bodies: string[] = [];
+  const requests: Request[] = [];
+  let responseIndex = 0;
+
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    requests.push(request);
+    bodies.push(await request.text());
+    const response = responses[responseIndex];
+    responseIndex += 1;
+    assert.ok(response, `Unexpected Gmail request ${request.method} ${request.url}`);
+
+    if ("json" in response) {
+      return Response.json(response.json, { status: response.status ?? 200 });
+    }
+
+    return new Response(null, { status: response.status });
+  };
+
+  return { bodies, requests };
+}
+
 test("marks a thread read by removing the UNREAD label through threads.modify", async () => {
   const captured = captureGmailFetch(createGmailModifyThreadResponse());
 
@@ -95,7 +151,7 @@ test("marks a thread read by removing the UNREAD label through threads.modify", 
   );
 
   assert.deepEqual(result, {
-    data: { mirrorApplied: true, read: true, threadId: gmailDraftTestIds.threadId },
+    data: { cacheApplied: true, read: true, threadId: gmailDraftTestIds.threadId },
     status: "ok",
   });
   assert.equal(setThreadReadOutputSchema.safeParse(result).success, true);
@@ -117,7 +173,7 @@ test("marks a thread unread by adding the UNREAD label through threads.modify", 
   );
 
   assert.deepEqual(result, {
-    data: { mirrorApplied: true, read: false, threadId: gmailDraftTestIds.threadId },
+    data: { cacheApplied: true, read: false, threadId: gmailDraftTestIds.threadId },
     status: "ok",
   });
   assert.deepEqual(JSON.parse(captured.bodies[0] ?? ""), { addLabelIds: ["UNREAD"] });
@@ -138,10 +194,10 @@ test("rejects thread read-state changes without the gmail.modify scope", async (
 
 // Write-through outcome: after mark-read, a cache-served mailbox read (the
 // same path the UI refetches through) must return the NEW state — asserting
-// only the outbound Gmail request is exactly how the stale-mirror bug shipped.
-test("mark read writes through to the mirror so a cache-served mailbox read returns read", async () => {
+// only the outbound Gmail request is exactly how the stale-cache bug shipped.
+test("mark read writes through so a cache-served mailbox read returns read", async () => {
   captureGmailFetch(createGmailModifyThreadResponse());
-  const { context, fakeRepository } = createUnreadInboxMirrorFixture();
+  const { context, fakeRepository } = createUnreadInboxCacheFixture();
 
   const result = await setMailboxThreadReadState(
     { read: true, threadId: gmailDraftTestIds.threadId },
@@ -149,10 +205,10 @@ test("mark read writes through to the mirror so a cache-served mailbox read retu
   );
 
   assert.deepEqual(result, {
-    data: { mirrorApplied: true, read: true, threadId: gmailDraftTestIds.threadId },
+    data: { cacheApplied: true, read: true, threadId: gmailDraftTestIds.threadId },
     status: "ok",
   });
-  assert.deepEqual(fakeRepository.mirrorWrites, [
+  assert.deepEqual(fakeRepository.cachedWrites, [
     {
       operation: "markCachedThreadReadState",
       read: true,
@@ -169,6 +225,7 @@ test("mark read writes through to the mirror so a cache-served mailbox read retu
     labelIds: ["INBOX"],
     threadId: gmailDraftTestIds.threadId,
   });
+  assert.equal(fakeRepository.getThreadHistoryId(gmailDraftTestIds.threadId), "987660");
 
   const mailbox = await getMailboxData({ query: "", view: "all" }, context);
   const mailboxRow = mailbox.data.messages.find(
@@ -198,7 +255,7 @@ test("mark unread writes through so the cache-served unread view includes the th
   );
 
   assert.deepEqual(result, {
-    data: { mirrorApplied: true, read: false, threadId: gmailDraftTestIds.threadId },
+    data: { cacheApplied: true, read: false, threadId: gmailDraftTestIds.threadId },
     status: "ok",
   });
   assert.deepEqual(fakeRepository.getThreadState(gmailDraftTestIds.threadId), {
@@ -216,10 +273,10 @@ test("mark unread writes through so the cache-served unread view includes the th
   assert.equal(unreadRow?.read, false);
 });
 
-test("returns ok with mirrorApplied false and logs when the mirror write keeps failing", async () => {
+test("returns ok with cacheApplied false and logs when the cache write keeps failing", async () => {
   const captured = captureGmailFetch(createGmailModifyThreadResponse());
-  const { context, fakeRepository, recordingLog } = createUnreadInboxMirrorFixture({
-    mirrorWriteFailures: Number.MAX_SAFE_INTEGER,
+  const { context, fakeRepository, recordingLog } = createUnreadInboxCacheFixture({
+    cacheWriteFailures: Number.MAX_SAFE_INTEGER,
   });
 
   const result = await setMailboxThreadReadState(
@@ -228,23 +285,23 @@ test("returns ok with mirrorApplied false and logs when the mirror write keeps f
   );
 
   // Gmail succeeded and stays the source of truth: the request is still 200 ok,
-  // the response only degrades to mirrorApplied: false for the UI toast.
+  // the response only degrades to cacheApplied: false for the UI toast.
   assert.deepEqual(result, {
-    data: { mirrorApplied: false, read: true, threadId: gmailDraftTestIds.threadId },
+    data: { cacheApplied: false, read: true, threadId: gmailDraftTestIds.threadId },
     status: "ok",
   });
   assert.equal(setThreadReadOutputSchema.safeParse(result).success, true);
   assert.equal(captured.requests.length, 1);
   // Internal retries: three attempts before giving up.
-  assert.equal(fakeRepository.mirrorWrites.length, 3);
-  // The cached mirror still holds the stale state — exactly what the operator
+  assert.equal(fakeRepository.cachedWrites.length, 3);
+  // The cache still holds the stale state — exactly what the operator
   // log below has to explain.
   assert.equal(fakeRepository.getThreadState(gmailDraftTestIds.threadId)?.isRead, false);
   assert.deepEqual(recordingLog.fields, [
     {
-      mailMirrorWrite: {
+      mailCachedWrite: {
         attempts: 3,
-        errorMessage: fakeMirrorWriteFailureMessage,
+        errorMessage: fakeCacheWriteFailureMessage,
         errorName: "Error",
         operation: "setThreadRead",
         outcome: "failed",
@@ -255,10 +312,10 @@ test("returns ok with mirrorApplied false and logs when the mirror write keeps f
   ]);
 });
 
-test("retries the mirror write and reports mirrorApplied true when a retry succeeds", async () => {
+test("retries the cache write and reports cacheApplied true when a retry succeeds", async () => {
   captureGmailFetch(createGmailModifyThreadResponse());
-  const { context, fakeRepository, recordingLog } = createUnreadInboxMirrorFixture({
-    mirrorWriteFailures: 2,
+  const { context, fakeRepository, recordingLog } = createUnreadInboxCacheFixture({
+    cacheWriteFailures: 2,
   });
 
   const result = await setMailboxThreadReadState(
@@ -267,10 +324,10 @@ test("retries the mirror write and reports mirrorApplied true when a retry succe
   );
 
   assert.deepEqual(result, {
-    data: { mirrorApplied: true, read: true, threadId: gmailDraftTestIds.threadId },
+    data: { cacheApplied: true, read: true, threadId: gmailDraftTestIds.threadId },
     status: "ok",
   });
-  assert.equal(fakeRepository.mirrorWrites.length, 3);
+  assert.equal(fakeRepository.cachedWrites.length, 3);
   assert.equal(fakeRepository.getThreadState(gmailDraftTestIds.threadId)?.isRead, true);
   assert.deepEqual(recordingLog.fields, []);
 });
@@ -284,7 +341,7 @@ test("archives a thread by removing the INBOX label through threads.modify", asy
   );
 
   assert.deepEqual(result, {
-    data: { mirrorApplied: true, threadId: gmailDraftTestIds.threadId },
+    data: { cacheApplied: true, threadId: gmailDraftTestIds.threadId },
     status: "ok",
   });
   assert.equal(archiveThreadOutputSchema.safeParse(result).success, true);
@@ -314,10 +371,10 @@ test("archive writes through so cache-served inbox drops the thread and archive 
   const result = await archiveMailboxThread({ threadId: gmailDraftTestIds.threadId }, context);
 
   assert.deepEqual(result, {
-    data: { mirrorApplied: true, threadId: gmailDraftTestIds.threadId },
+    data: { cacheApplied: true, threadId: gmailDraftTestIds.threadId },
     status: "ok",
   });
-  assert.deepEqual(fakeRepository.mirrorWrites, [
+  assert.deepEqual(fakeRepository.cachedWrites, [
     {
       operation: "markCachedThreadArchived",
       threadId: gmailDraftTestIds.threadId,
@@ -349,26 +406,26 @@ test("archive writes through so cache-served inbox drops the thread and archive 
   );
 });
 
-test("archive returns ok with mirrorApplied false and logs when the mirror write keeps failing", async () => {
+test("archive returns ok with cacheApplied false and logs when the cache write keeps failing", async () => {
   captureGmailFetch(createGmailModifyThreadResponse());
-  const { context, fakeRepository, recordingLog } = createUnreadInboxMirrorFixture({
-    mirrorWriteFailures: Number.MAX_SAFE_INTEGER,
+  const { context, fakeRepository, recordingLog } = createUnreadInboxCacheFixture({
+    cacheWriteFailures: Number.MAX_SAFE_INTEGER,
   });
 
   const result = await archiveMailboxThread({ threadId: gmailDraftTestIds.threadId }, context);
 
   assert.deepEqual(result, {
-    data: { mirrorApplied: false, threadId: gmailDraftTestIds.threadId },
+    data: { cacheApplied: false, threadId: gmailDraftTestIds.threadId },
     status: "ok",
   });
   assert.equal(archiveThreadOutputSchema.safeParse(result).success, true);
-  assert.equal(fakeRepository.mirrorWrites.length, 3);
+  assert.equal(fakeRepository.cachedWrites.length, 3);
   assert.equal(fakeRepository.getThreadState(gmailDraftTestIds.threadId)?.isInbox, true);
   assert.deepEqual(recordingLog.fields, [
     {
-      mailMirrorWrite: {
+      mailCachedWrite: {
         attempts: 3,
-        errorMessage: fakeMirrorWriteFailureMessage,
+        errorMessage: fakeCacheWriteFailureMessage,
         errorName: "Error",
         operation: "archiveThread",
         outcome: "failed",
@@ -389,7 +446,11 @@ test("rejects archiving without the gmail.modify scope", async () => {
 });
 
 test("creates a reply draft with To, Subject, and In-Reply-To MIME headers", async () => {
-  const captured = captureGmailFetch(createGmailDraftResponse());
+  const captured = captureGmailResponseSequence([
+    { json: createGmailDraftResponse() },
+    { json: createGmailThreadResponse() },
+  ]);
+  const fakeRepository = createFakeMailSyncRepository();
 
   const result = await createMailboxDraft(
     {
@@ -399,7 +460,7 @@ test("creates a reply draft with To, Subject, and In-Reply-To MIME headers", asy
       threadId: gmailDraftTestIds.threadId,
       to: "receiver@example.com",
     },
-    modifyContext(),
+    modifyContext(fakeRepository.repository),
   );
 
   assert.deepEqual(result, {
@@ -407,6 +468,7 @@ test("creates a reply draft with To, Subject, and In-Reply-To MIME headers", asy
       draftId: gmailDraftTestIds.draftId,
       messageId: gmailDraftTestIds.messageId,
       threadId: gmailDraftTestIds.threadId,
+      cacheApplied: true,
     },
     status: "ok",
   });
@@ -426,6 +488,17 @@ test("creates a reply draft with To, Subject, and In-Reply-To MIME headers", asy
   assert.match(rawMimeMessage, /In-Reply-To: <original-message@mail.gmail.com>\r\n/);
   assert.match(rawMimeMessage, /References: <original-message@mail.gmail.com>\r\n/);
   assert.match(rawMimeMessage, /\r\n\r\nDraft body stays literal$/);
+  assert.deepEqual(fakeRepository.cachedWrites, [
+    {
+      operation: "reconcileCachedGmailThread",
+      threadId: gmailDraftTestIds.threadId,
+      userId: "user-id",
+    },
+  ]);
+  assertGmailRequest(captured.requests[1], {
+    bearer: "better-auth-modify-token",
+    url: `https://gmail.googleapis.com/gmail/v1/users/me/threads/${gmailDraftTestIds.threadId}?format=full`,
+  });
 });
 
 test("creates a bare draft without To and Subject MIME headers", async () => {
@@ -468,7 +541,12 @@ test("rejects draft creation without the gmail.modify scope", async () => {
 });
 
 test("updates a draft in place through drafts.update", async () => {
-  const captured = captureGmailFetch(createGmailDraftResponse());
+  const captured = captureGmailResponseSequence([
+    { json: createGmailDraftResponse() },
+    { json: createGmailDraftResponse() },
+    { json: createGmailThreadResponse({ body: "Updated draft body" }) },
+  ]);
+  const fakeRepository = createFakeMailSyncRepository();
 
   const result = await updateMailboxDraft(
     {
@@ -478,7 +556,7 @@ test("updates a draft in place through drafts.update", async () => {
       threadId: gmailDraftTestIds.threadId,
       to: "receiver@example.com",
     },
-    modifyContext(),
+    modifyContext(fakeRepository.repository),
   );
 
   assert.deepEqual(result, {
@@ -486,6 +564,7 @@ test("updates a draft in place through drafts.update", async () => {
       draftId: gmailDraftTestIds.draftId,
       messageId: gmailDraftTestIds.messageId,
       threadId: gmailDraftTestIds.threadId,
+      cacheApplied: true,
     },
     status: "ok",
   });
@@ -493,42 +572,273 @@ test("updates a draft in place through drafts.update", async () => {
 
   assertGmailRequest(captured.requests[0], {
     bearer: "better-auth-modify-token",
+    url: `https://gmail.googleapis.com/gmail/v1/users/me/drafts/${gmailDraftTestIds.draftId}`,
+  });
+  assertGmailRequest(captured.requests[1], {
+    bearer: "better-auth-modify-token",
     method: "PUT",
     url: `https://gmail.googleapis.com/gmail/v1/users/me/drafts/${gmailDraftTestIds.draftId}`,
   });
 
-  const payload = JSON.parse(captured.bodies[0] ?? "");
+  const payload = JSON.parse(captured.bodies[1] ?? "");
   const rawMimeMessage = decodeRawMimeMessage(payload.message.raw);
   assert.match(rawMimeMessage, /\r\n\r\nUpdated draft body$/);
+  assert.equal(fakeRepository.cachedWrites.length, 1);
+});
+
+test("draft update transient missing read preserves the old thread fence for recovery", async () => {
+  const oldThreadId = "old-draft-thread-id";
+  const replacementMessageId = "replacement-draft-message-id";
+  const replacementThreadId = "replacement-draft-thread-id";
+  const mutableCalls: string[] = [];
+  const fakeRepository = createFakeMailSyncRepository();
+  const gmailLayer = createInjectedGmailClientLayer(mutableCalls, {
+    getDraft: (_accessToken, _userId, draftId) =>
+      Effect.sync(() => {
+        mutableCalls.push(`getDraft:${draftId}`);
+        return {
+          id: draftId,
+          message: {
+            id: gmailDraftTestIds.messageId,
+            labelIds: ["DRAFT"],
+            threadId: oldThreadId,
+          },
+        };
+      }),
+    getProfile: () =>
+      Effect.sync(() => {
+        mutableCalls.push("getProfile");
+        return {
+          emailAddress: "demo-user@example.com",
+          historyId: "987663",
+          messagesTotal: 10,
+          threadsTotal: 8,
+        };
+      }),
+    getThread: (_accessToken, _userId, threadId) =>
+      Effect.sync(() => {
+        mutableCalls.push(`getThread:${threadId}`);
+        return createGmailThreadResponse({
+          body: "Updated draft body",
+          messageId: replacementMessageId,
+          threadId,
+        });
+      }),
+    getThreadIfExists: (_accessToken, _userId, threadId) =>
+      Effect.sync(() => {
+        mutableCalls.push(`getThreadIfExists:${threadId}`);
+        return null;
+      }),
+    updateDraft: (input) =>
+      Effect.sync(() => {
+        mutableCalls.push(`updateDraft:${input.draftId}`);
+        return {
+          id: input.draftId,
+          message: {
+            id: replacementMessageId,
+            labelIds: ["DRAFT"],
+            threadId: replacementThreadId,
+          },
+        };
+      }),
+  });
+
+  const result = await runServiceEffect(
+    MailboxService.layer.pipe(Layer.provide(gmailLayer)),
+    Effect.gen(function* () {
+      const service = yield* MailboxService;
+      return yield* service.updateMailboxDraft(
+        { body: "Updated draft body", draftId: gmailDraftTestIds.draftId },
+        modifyContext(fakeRepository.repository),
+      );
+    }),
+  );
+
+  assert.equal(result.status, "ok");
+  assert.deepEqual(mutableCalls, [
+    `getDraft:${gmailDraftTestIds.draftId}`,
+    `updateDraft:${gmailDraftTestIds.draftId}`,
+    `getThread:${replacementThreadId}`,
+    "getProfile",
+    `getThreadIfExists:${oldThreadId}`,
+  ]);
+  assert.deepEqual(fakeRepository.cachedWrites, [
+    {
+      operation: "reconcileCachedGmailThread",
+      threadId: replacementThreadId,
+      userId: "user-id",
+    },
+    {
+      deletionFenceHistoryId: "987663",
+      operation: "reconcileCachedGmailThread",
+      threadId: oldThreadId,
+      userId: "user-id",
+    },
+  ]);
 });
 
 test("deletes a draft through drafts.delete and echoes the draft id", async () => {
-  const mutableRequests: Request[] = [];
-  globalThis.fetch = async (input, init) => {
-    mutableRequests.push(new Request(input, init));
-    return new Response(null, { status: 204 });
-  };
+  const captured = captureGmailResponseSequence([
+    { json: createGmailDraftResponse() },
+    { status: 204 },
+    {
+      json: {
+        emailAddress: "demo-user@example.com",
+        historyId: "987662",
+        messagesTotal: 10,
+        threadsTotal: 8,
+      },
+    },
+    { status: 404 },
+  ]);
+  const fakeRepository = createFakeMailSyncRepository();
 
-  const result = await deleteMailboxDraft({ draftId: gmailDraftTestIds.draftId }, modifyContext());
+  const result = await deleteMailboxDraft(
+    { draftId: gmailDraftTestIds.draftId, threadId: "stale-client-thread-id" },
+    modifyContext(fakeRepository.repository),
+  );
 
   assert.deepEqual(result, {
-    data: { draftId: gmailDraftTestIds.draftId },
+    data: {
+      cacheApplied: true,
+      draftId: gmailDraftTestIds.draftId,
+      threadId: gmailDraftTestIds.threadId,
+    },
     status: "ok",
   });
   assert.equal(deleteDraftOutputSchema.safeParse(result).success, true);
 
-  assertGmailRequest(mutableRequests[0], {
+  assertGmailRequest(captured.requests[0], {
+    bearer: "better-auth-modify-token",
+    method: "GET",
+    url: `https://gmail.googleapis.com/gmail/v1/users/me/drafts/${gmailDraftTestIds.draftId}`,
+  });
+  assertGmailRequest(captured.requests[1], {
     bearer: "better-auth-modify-token",
     method: "DELETE",
     url: `https://gmail.googleapis.com/gmail/v1/users/me/drafts/${gmailDraftTestIds.draftId}`,
   });
+  assertGmailRequest(captured.requests[2], {
+    bearer: "better-auth-modify-token",
+    method: "GET",
+    url: "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+  });
+  assertGmailRequest(captured.requests[3], {
+    bearer: "better-auth-modify-token",
+    method: "GET",
+    url: `https://gmail.googleapis.com/gmail/v1/users/me/threads/${gmailDraftTestIds.threadId}?format=full`,
+  });
+  assert.deepEqual(fakeRepository.cachedWrites, [
+    {
+      deletionFenceHistoryId: "987662",
+      operation: "reconcileCachedGmailThread",
+      threadId: gmailDraftTestIds.threadId,
+      userId: "user-id",
+    },
+  ]);
+});
+
+test("treats an already-deleted Gmail draft as an idempotent success", async () => {
+  const captured = captureGmailResponseSequence([
+    { status: 404 },
+    {
+      json: {
+        emailAddress: "demo-user@example.com",
+        historyId: "987663",
+        messagesTotal: 10,
+        threadsTotal: 8,
+      },
+    },
+    { status: 404 },
+  ]);
+  const fakeRepository = createFakeMailSyncRepository();
+
+  const result = await deleteMailboxDraft(
+    { draftId: gmailDraftTestIds.draftId, threadId: gmailDraftTestIds.threadId },
+    modifyContext(fakeRepository.repository),
+  );
+
+  assert.deepEqual(result, {
+    data: {
+      cacheApplied: true,
+      draftId: gmailDraftTestIds.draftId,
+      threadId: gmailDraftTestIds.threadId,
+    },
+    status: "ok",
+  });
+  assert.equal(deleteDraftOutputSchema.safeParse(result).success, true);
+  assert.equal(captured.requests.length, 3);
+  assertGmailRequest(captured.requests[0], {
+    bearer: "better-auth-modify-token",
+    method: "GET",
+    url: `https://gmail.googleapis.com/gmail/v1/users/me/drafts/${gmailDraftTestIds.draftId}`,
+  });
+  assertGmailRequest(captured.requests[1], {
+    bearer: "better-auth-modify-token",
+    method: "GET",
+    url: "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+  });
+  assertGmailRequest(captured.requests[2], {
+    bearer: "better-auth-modify-token",
+    method: "GET",
+    url: `https://gmail.googleapis.com/gmail/v1/users/me/threads/${gmailDraftTestIds.threadId}?format=full`,
+  });
+  assert.deepEqual(fakeRepository.cachedWrites, [
+    {
+      deletionFenceHistoryId: "987663",
+      operation: "reconcileCachedGmailThread",
+      threadId: gmailDraftTestIds.threadId,
+      userId: "user-id",
+    },
+  ]);
+});
+
+test("send reconciles the authoritative SENT thread into the cache", async () => {
+  const sentThreadId = "sent-thread-id";
+  const captured = captureGmailResponseSequence([
+    {
+      json: { id: "sent-message-id", labelIds: ["SENT"], threadId: sentThreadId },
+    },
+    {
+      json: createGmailThreadResponse({
+        labelIds: ["SENT"],
+        messageId: "sent-message-id",
+        threadId: sentThreadId,
+      }),
+    },
+  ]);
+  const fakeRepository = createFakeMailSyncRepository();
+
+  const result = await sendMailboxMessage(
+    {
+      body: "Sent body",
+      subject: "Sent subject",
+      to: "receiver@example.com",
+    },
+    modifyContext(fakeRepository.repository),
+  );
+
+  assert.deepEqual(result, {
+    data: { cacheApplied: true, messageId: "sent-message-id", threadId: sentThreadId },
+    status: "ok",
+  });
+  assert.equal(sendMailOutputSchema.safeParse(result).success, true);
+  assertGmailRequest(captured.requests[1], {
+    bearer: "better-auth-modify-token",
+    url: `https://gmail.googleapis.com/gmail/v1/users/me/threads/${sentThreadId}?format=full`,
+  });
+  assert.equal(fakeRepository.cachedWrites.length, 1);
 });
 
 test("rejects draft deletion without the gmail.modify scope", async () => {
   rejectGmailFetch("fetch should not run without the Gmail modify scope");
 
   await assert.rejects(
-    () => deleteMailboxDraft({ draftId: gmailDraftTestIds.draftId }, legacyContext()),
+    () =>
+      deleteMailboxDraft(
+        { draftId: gmailDraftTestIds.draftId, threadId: gmailDraftTestIds.threadId },
+        legacyContext(),
+      ),
     scopeRejectionCheck,
   );
 });
@@ -612,7 +922,10 @@ test("MailboxService routes mutations through the injected GmailClient service",
         { body: "Updated body", draftId: gmailDraftTestIds.draftId },
         modifyContext(),
       );
-      yield* service.deleteMailboxDraft({ draftId: gmailDraftTestIds.draftId }, modifyContext());
+      yield* service.deleteMailboxDraft(
+        { draftId: gmailDraftTestIds.draftId, threadId: gmailDraftTestIds.threadId },
+        modifyContext(),
+      );
       return yield* service.listMailboxDrafts(modifyContext());
     }),
   );
@@ -622,13 +935,22 @@ test("MailboxService routes mutations through the injected GmailClient service",
     `modifyThread:${gmailDraftTestIds.threadId}`,
     `modifyThread:${gmailDraftTestIds.threadId}`,
     "createDraft",
+    `getThread:${gmailDraftTestIds.threadId}`,
+    `getDraft:${gmailDraftTestIds.draftId}`,
     `updateDraft:${gmailDraftTestIds.draftId}`,
+    `getThread:${gmailDraftTestIds.threadId}`,
+    `getDraftIfExists:${gmailDraftTestIds.draftId}`,
     `deleteDraft:${gmailDraftTestIds.draftId}`,
+    "getProfile",
+    `getThreadIfExists:${gmailDraftTestIds.threadId}`,
     "listDrafts",
   ]);
 });
 
-function createInjectedGmailClientLayer(mutableCalls: string[]) {
+function createInjectedGmailClientLayer(
+  mutableCalls: string[],
+  overrides: Partial<Parameters<typeof GmailClient.of>[0]> = {},
+) {
   return Layer.succeed(
     GmailClient,
     GmailClient.of({
@@ -642,10 +964,37 @@ function createInjectedGmailClientLayer(mutableCalls: string[]) {
           mutableCalls.push(`deleteDraft:${input.draftId}`);
           return { draftId: input.draftId };
         }),
+      getDraft: (_accessToken, _userId, draftId) =>
+        Effect.sync(() => {
+          mutableCalls.push(`getDraft:${draftId}`);
+          return createGmailDraftResponse();
+        }),
+      getDraftIfExists: (_accessToken, _userId, draftId) =>
+        Effect.sync(() => {
+          mutableCalls.push(`getDraftIfExists:${draftId}`);
+          return createGmailDraftResponse();
+        }),
       getLabel: () => Effect.die(new Error("getLabel is not exercised by mutation tests")),
-      getProfile: () => Effect.die(new Error("getProfile is not exercised by mutation tests")),
-      getThread: () => Effect.die(new Error("getThread is not exercised by mutation tests")),
-      getThreadIfExists: () => Effect.succeed(null),
+      getProfile: () =>
+        Effect.sync(() => {
+          mutableCalls.push("getProfile");
+          return {
+            emailAddress: "demo-user@example.com",
+            historyId: "987662",
+            messagesTotal: 10,
+            threadsTotal: 8,
+          };
+        }),
+      getThread: (_accessToken, _userId, threadId) =>
+        Effect.sync(() => {
+          mutableCalls.push(`getThread:${threadId}`);
+          return createGmailThreadResponse({ threadId });
+        }),
+      getThreadIfExists: (_accessToken, _userId, threadId) =>
+        Effect.sync(() => {
+          mutableCalls.push(`getThreadIfExists:${threadId}`);
+          return null;
+        }),
       listDrafts: () =>
         Effect.sync(() => {
           mutableCalls.push("listDrafts");
@@ -671,6 +1020,7 @@ function createInjectedGmailClientLayer(mutableCalls: string[]) {
           return createGmailDraftResponse();
         }),
       watchMailbox: () => Effect.succeed({ expiration: "176001", historyId: "176001" }),
+      ...overrides,
     }),
   );
 }

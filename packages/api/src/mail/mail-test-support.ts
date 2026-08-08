@@ -105,7 +105,7 @@ export function createSignedInGmailContext(accessToken: string, scopes: readonly
 }
 
 // Records evlog-style operator context written by services under test so wide
-// events (e.g. a failed mirror write) can be asserted, not just emitted.
+// events (e.g. a failed cache write) can be asserted, not just emitted.
 export function createRecordingAuthLog() {
   const errors: unknown[] = [];
   const fields: Record<string, unknown>[] = [];
@@ -138,14 +138,19 @@ type FakeCachedThreadState = {
   readonly threadId: string;
 };
 
-type FakeMirrorWrite = {
-  readonly operation: "markCachedThreadArchived" | "markCachedThreadReadState";
+type FakeCacheWrite = {
+  readonly deletionFenceHistoryId?: string;
+  readonly historyId?: string;
+  readonly operation:
+    | "markCachedThreadArchived"
+    | "markCachedThreadReadState"
+    | "reconcileCachedGmailThread";
   readonly read?: boolean;
   readonly threadId: string;
   readonly userId: string;
 };
 
-export const fakeMirrorWriteFailureMessage = "mirror write failed (test double)";
+export const fakeCacheWriteFailureMessage = "cache write failed (test double)";
 
 function createNotExercisedRepositoryMethod(method: string) {
   return async (): Promise<never> => {
@@ -155,7 +160,7 @@ function createNotExercisedRepositoryMethod(method: string) {
 
 /**
  * Complete in-memory stand-in for the Prisma mail sync repository. Every
- * method exists (unexercised ones throw loudly), mirror writes are recorded
+ * method exists (unexercised ones throw loudly), cache writes are recorded
  * AND applied to the in-memory cache, and getCachedMailboxData serves reads
  * from that cache — so tests can assert the OUTCOME of a write-through
  * (mark read, then a cache-served mailbox read returns read: true), not just
@@ -163,7 +168,8 @@ function createNotExercisedRepositoryMethod(method: string) {
  */
 export function createFakeMailSyncRepository(
   options: {
-    readonly mirrorWriteFailures?: number;
+    readonly cacheWriteFailures?: number;
+    readonly lastSuccessfulSyncAt?: Date | null;
     readonly threads?: readonly FakeCachedThreadSeed[];
   } = {},
 ) {
@@ -178,13 +184,14 @@ export function createFakeMailSyncRepository(
       },
     ]),
   );
-  const mirrorWrites: FakeMirrorWrite[] = [];
-  let remainingMirrorWriteFailures = options.mirrorWriteFailures ?? 0;
+  const cachedWrites: FakeCacheWrite[] = [];
+  const threadHistoryIds = new Map<string, string>();
+  let remainingCacheWriteFailures = options.cacheWriteFailures ?? 0;
 
-  const failMirrorWriteIfConfigured = () => {
-    if (remainingMirrorWriteFailures > 0) {
-      remainingMirrorWriteFailures -= 1;
-      throw new Error(fakeMirrorWriteFailureMessage);
+  const failCacheWriteIfConfigured = () => {
+    if (remainingCacheWriteFailures > 0) {
+      remainingCacheWriteFailures -= 1;
+      throw new Error(fakeCacheWriteFailureMessage);
     }
   };
 
@@ -229,38 +236,44 @@ export function createFakeMailSyncRepository(
           messages: cachedThreads.map((thread) => toFakeCachedMailMessage(thread)),
           source: "gmail" as const,
         },
+        lastSuccessfulSyncAt: options.lastSuccessfulSyncAt ?? null,
         mailAccountId: "mail-account-1",
       };
     },
     markCachedThreadArchived: async (input: {
+      readonly historyId?: string;
       readonly threadId: string;
       readonly userId: string;
     }) => {
-      mirrorWrites.push({
+      cachedWrites.push({
         operation: "markCachedThreadArchived",
         threadId: input.threadId,
         userId: input.userId,
       });
-      failMirrorWriteIfConfigured();
+      failCacheWriteIfConfigured();
 
       const thread = threads.get(input.threadId);
       if (thread) {
         thread.isInbox = false;
         thread.labelIds = thread.labelIds.filter((labelId) => labelId !== "INBOX");
       }
+      if (input.historyId) {
+        threadHistoryIds.set(input.threadId, input.historyId);
+      }
     },
     markCachedThreadReadState: async (input: {
+      readonly historyId?: string;
       readonly read: boolean;
       readonly threadId: string;
       readonly userId: string;
     }) => {
-      mirrorWrites.push({
+      cachedWrites.push({
         operation: "markCachedThreadReadState",
         read: input.read,
         threadId: input.threadId,
         userId: input.userId,
       });
-      failMirrorWriteIfConfigured();
+      failCacheWriteIfConfigured();
 
       const thread = threads.get(input.threadId);
       if (thread) {
@@ -268,6 +281,31 @@ export function createFakeMailSyncRepository(
         thread.labelIds = input.read
           ? thread.labelIds.filter((labelId) => labelId !== "UNREAD")
           : [...thread.labelIds.filter((labelId) => labelId !== "UNREAD"), "UNREAD"];
+      }
+      if (input.historyId) {
+        threadHistoryIds.set(input.threadId, input.historyId);
+      }
+    },
+    reconcileCachedGmailThread: async (input: {
+      readonly deletionFenceHistoryId?: string;
+      readonly historyId?: string;
+      readonly thread: unknown;
+      readonly threadId: string;
+      readonly userId: string;
+    }) => {
+      cachedWrites.push({
+        ...(input.deletionFenceHistoryId
+          ? { deletionFenceHistoryId: input.deletionFenceHistoryId }
+          : {}),
+        ...(input.historyId ? { historyId: input.historyId } : {}),
+        operation: "reconcileCachedGmailThread",
+        threadId: input.threadId,
+        userId: input.userId,
+      });
+      failCacheWriteIfConfigured();
+
+      if (input.thread === null) {
+        threads.delete(input.threadId);
       }
     },
     markGmailMailboxActivity: async () => {},
@@ -293,7 +331,8 @@ export function createFakeMailSyncRepository(
           }
         : null;
     },
-    mirrorWrites,
+    getThreadHistoryId: (threadId: string) => threadHistoryIds.get(threadId) ?? null,
+    cachedWrites,
     repository,
   };
 }
@@ -355,6 +394,50 @@ export function createGmailModifyThreadResponse(labelIds: readonly string[] = ["
         labelIds: [...labelIds],
         threadId: gmailDraftTestIds.threadId,
       },
-    ],
+    ] as const,
+  };
+}
+
+export function createGmailThreadResponse(
+  options: {
+    readonly body?: string;
+    readonly labelIds?: readonly string[];
+    readonly messageId?: string;
+    readonly subject?: string;
+    readonly threadId?: string;
+  } = {},
+) {
+  const threadId = options.threadId ?? gmailDraftTestIds.threadId;
+  const messageId = options.messageId ?? gmailDraftTestIds.messageId;
+  const subject = options.subject ?? "Cached Gmail write";
+  const body = options.body ?? "Authoritative Gmail body";
+
+  return {
+    historyId: "987661",
+    id: threadId,
+    messages: [
+      {
+        historyId: "987661",
+        id: messageId,
+        internalDate: "1785420000000",
+        labelIds: [...(options.labelIds ?? ["DRAFT"])],
+        payload: {
+          body: {
+            data: Buffer.from(body, "utf8").toString("base64url"),
+            size: Buffer.byteLength(body),
+          },
+          headers: [
+            { name: "From", value: "Demo User <demo-user@example.com>" },
+            { name: "To", value: "receiver@example.com" },
+            { name: "Subject", value: subject },
+            { name: "Message-ID", value: `<${messageId}@mail.gmail.com>` },
+          ],
+          mimeType: "text/plain",
+        },
+        sizeEstimate: 512,
+        snippet: body,
+        threadId,
+      },
+    ] as const,
   };
 }

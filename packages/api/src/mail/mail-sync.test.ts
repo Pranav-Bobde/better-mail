@@ -988,6 +988,33 @@ test("sync writes Gmail label names and types from catalog with fallback on miss
   ]);
 });
 
+test("snapshot reconciliation without a catalog preserves existing label metadata", async () => {
+  const labelWrites: unknown[] = [];
+  const repositoryLayer = createThreadApplyRepositoryLayer(
+    createPrismaClientForThreadApplyTest([], labelWrites),
+  );
+
+  await runWithMailSyncRepositoryLayer(repositoryLayer, (repository) =>
+    repository.applyGmailThread({
+      latestMessageId: "message-2",
+      mailAccountId: "mail-account-id",
+      thread: createRealShapedGmailThread(),
+      threadId: "thread-1",
+    }),
+  );
+
+  assert.ok(labelWrites.length > 0);
+  for (const write of labelWrites) {
+    assert.deepEqual(write, {
+      createName: (write as { readonly createName: string }).createName,
+      createType: (write as { readonly createType: string }).createType,
+      providerLabelId: (write as { readonly providerLabelId: string }).providerLabelId,
+      updateName: undefined,
+      updateType: undefined,
+    });
+  }
+});
+
 test("stores catalog-missing Gmail special labels like YELLOW_STAR as system", async () => {
   const labelWrites: unknown[] = [];
   const repositoryLayer = createThreadApplyRepositoryLayer(

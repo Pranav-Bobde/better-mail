@@ -4,9 +4,11 @@ import test from "node:test";
 import { mailErrors } from "@code-main/api/mail/errors";
 
 import {
-  getMirrorWriteWarning,
+  getCacheWriteWarning,
   getMutationErrorPresentation,
   isGmailScopeMissingError,
+  shouldRefreshDraftQueriesAfterMutation,
+  shouldInvalidateAfterCacheWrite,
 } from "@/features/mail/mutations/mutation-result";
 
 test("isGmailScopeMissingError matches the catalog scope-missing code exactly", () => {
@@ -46,12 +48,12 @@ test("unknown codes fall back to a generic human message", () => {
   });
 });
 
-// Gmail accepted the write but the local cache mirror missed it: the API
-// still returns ok with mirrorApplied: false, and the user must be told the
+// Gmail accepted the write but the local cache missed it: the API
+// still returns ok with cacheApplied: false, and the user must be told the
 // optimistic change may briefly reappear — never a silent revert.
-test("mirror-deferred ok results warn that the change may briefly reappear", () => {
-  const warning = getMirrorWriteWarning({
-    data: { mirrorApplied: false },
+test("cache-deferred ok results warn that the change may briefly reappear", () => {
+  const warning = getCacheWriteWarning({
+    data: { cacheApplied: false },
     status: "ok",
   });
 
@@ -61,19 +63,75 @@ test("mirror-deferred ok results warn that the change may briefly reappear", () 
   );
 });
 
-test("fully applied ok results and error results produce no mirror warning", () => {
+test("fully applied ok results and error results produce no cache warning", () => {
   assert.equal(
-    getMirrorWriteWarning({
-      data: { mirrorApplied: true },
+    getCacheWriteWarning({
+      data: { cacheApplied: true },
       status: "ok",
     }),
     null,
   );
   assert.equal(
-    getMirrorWriteWarning({
+    getCacheWriteWarning({
       error: "mail.GMAIL_MODIFY_THREAD_FAILED",
       status: "error",
     }),
     null,
+  );
+});
+
+test("an older response without cacheApplied is not treated as an explicit cache failure", () => {
+  assert.equal(
+    getCacheWriteWarning({
+      data: {},
+      status: "ok",
+    }),
+    null,
+  );
+});
+
+test("auto-read can suppress a cache warning without hiding manual-action warnings", () => {
+  const result = {
+    data: { cacheApplied: false },
+    status: "ok" as const,
+  };
+
+  assert.notEqual(getCacheWriteWarning(result), null);
+  assert.equal(getCacheWriteWarning(result, { suppress: true }), null);
+});
+
+test("a confirmed cache miss keeps optimistic state instead of refetching stale rows", () => {
+  assert.equal(
+    shouldInvalidateAfterCacheWrite({ data: { cacheApplied: false }, status: "ok" }),
+    false,
+  );
+  assert.equal(
+    shouldInvalidateAfterCacheWrite({ data: { cacheApplied: true }, status: "ok" }),
+    true,
+  );
+  assert.equal(shouldInvalidateAfterCacheWrite({ data: {}, status: "ok" }), true);
+  assert.equal(
+    shouldInvalidateAfterCacheWrite({
+      error: "mail.GMAIL_MODIFY_THREAD_FAILED",
+      status: "error",
+    }),
+    false,
+  );
+});
+
+test("draft queries refresh after Gmail succeeds even when cache write is deferred", () => {
+  assert.equal(
+    shouldRefreshDraftQueriesAfterMutation({
+      data: { cacheApplied: false },
+      status: "ok",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRefreshDraftQueriesAfterMutation({
+      error: "mail.GMAIL_MODIFY_THREAD_FAILED",
+      status: "error",
+    }),
+    false,
   );
 });

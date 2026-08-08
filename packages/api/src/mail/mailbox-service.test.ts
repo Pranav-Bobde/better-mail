@@ -9,6 +9,8 @@ import type { GmailClient as GmailClientIdentifier } from "./gmail-client";
 import type { MailboxService as MailboxServiceIdentifier } from "./mailbox-service";
 
 import {
+  createFakeMailSyncRepository,
+  createGmailThreadResponse,
   createSignedInGmailContext as createSignedInGmailContextWithScopes,
   gmailLegacyReadSendTestScopes,
   hasMailErrorCode,
@@ -120,12 +122,24 @@ test("fetches Gmail mailbox when only the gmail.modify scope is granted", async 
 });
 
 test("sends Gmail when only the gmail.modify scope is granted", async () => {
-  globalThis.fetch = async () =>
-    Response.json({
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    if (request.url.includes("/threads/sent-thread-id")) {
+      return Response.json(
+        createGmailThreadResponse({
+          labelIds: ["SENT"],
+          messageId: "sent-message-id",
+          threadId: "sent-thread-id",
+        }),
+      );
+    }
+
+    return Response.json({
       id: "sent-message-id",
       labelIds: ["SENT"],
       threadId: "sent-thread-id",
     });
+  };
 
   const result = await sendMailboxMessage(
     {
@@ -133,7 +147,7 @@ test("sends Gmail when only the gmail.modify scope is granted", async () => {
       subject: "Real-shaped test subject",
       to: "receiver@example.com",
     },
-    createSignedInGmailContext("better-auth-access-token", [
+    createSignedInGmailMutationContext("better-auth-access-token", [
       "email",
       "profile",
       "https://www.googleapis.com/auth/gmail.modify",
@@ -280,6 +294,16 @@ test("sends Gmail with the Better Auth Google access token", async () => {
       throw new Error("demo refresh-token flow should not run");
     }
 
+    if (request.url.includes("/threads/sent-thread-id")) {
+      return Response.json(
+        createGmailThreadResponse({
+          labelIds: ["SENT"],
+          messageId: "sent-message-id",
+          threadId: "sent-thread-id",
+        }),
+      );
+    }
+
     return Response.json({
       id: "sent-message-id",
       labelIds: ["SENT"],
@@ -293,11 +317,12 @@ test("sends Gmail with the Better Auth Google access token", async () => {
       subject: "Real-shaped test subject",
       to: "receiver@example.com",
     },
-    createSignedInGmailContext("better-auth-access-token"),
+    createSignedInGmailMutationContext("better-auth-access-token"),
   );
 
   assert.deepEqual(result, {
     data: {
+      cacheApplied: true,
       messageId: "sent-message-id",
       threadId: "sent-thread-id",
     },
@@ -387,7 +412,7 @@ test("requires the Gmail send scope before sending mail", async () => {
           subject: "Real-shaped test subject",
           to: "receiver@example.com",
         },
-        createSignedInGmailContext("better-auth-access-token", [
+        createSignedInGmailMutationContext("better-auth-access-token", [
           "https://www.googleapis.com/auth/gmail.readonly",
         ]),
       ),
@@ -734,8 +759,19 @@ async function sendMessageAndGetRawMimeMessage(input: {
 
   globalThis.fetch = async (requestInput, init) => {
     const request = new Request(requestInput, init);
-    assert.equal(request.url, "https://gmail.googleapis.com/gmail/v1/users/me/messages/send");
     assert.equal(request.headers.get("authorization"), "Bearer better-auth-access-token");
+
+    if (request.url.includes("/threads/sent-thread-id")) {
+      return Response.json(
+        createGmailThreadResponse({
+          labelIds: ["SENT"],
+          messageId: "sent-message-id",
+          threadId: "sent-thread-id",
+        }),
+      );
+    }
+
+    assert.equal(request.url, "https://gmail.googleapis.com/gmail/v1/users/me/messages/send");
 
     const payload = JSON.parse(await request.text());
     rawMessage = payload.raw;
@@ -747,7 +783,7 @@ async function sendMessageAndGetRawMimeMessage(input: {
     });
   };
 
-  await sendMailboxMessage(input, createSignedInGmailContext("better-auth-access-token"));
+  await sendMailboxMessage(input, createSignedInGmailMutationContext("better-auth-access-token"));
 
   return Buffer.from(rawMessage, "base64url").toString("utf8");
 }
@@ -1107,6 +1143,24 @@ function createInjectedGmailClientLayer(
           },
         }),
       deleteDraft: (input) => Effect.succeed({ draftId: input.draftId }),
+      getDraft: (_accessToken, _userId, draftId) =>
+        Effect.succeed({
+          id: draftId,
+          message: {
+            id: "18c2f5f6c5f9f101",
+            labelIds: ["DRAFT"],
+            threadId: "199aa11bb22cc330",
+          },
+        }),
+      getDraftIfExists: (_accessToken, _userId, draftId) =>
+        Effect.succeed({
+          id: draftId,
+          message: {
+            id: "18c2f5f6c5f9f101",
+            labelIds: ["DRAFT"],
+            threadId: "199aa11bb22cc330",
+          },
+        }),
       getLabel: (_accessToken: string, _userId: string, labelId: string) =>
         Effect.sync(() => {
           mutableCalls.push(`getLabel:${labelId}`);
@@ -1183,4 +1237,14 @@ function createSignedInGmailContext(
   scopes: readonly string[] = gmailLegacyReadSendTestScopes,
 ) {
   return createSignedInGmailContextWithScopes(accessToken, scopes);
+}
+
+function createSignedInGmailMutationContext(
+  accessToken: string,
+  scopes: readonly string[] = gmailLegacyReadSendTestScopes,
+) {
+  return {
+    ...createSignedInGmailContext(accessToken, scopes),
+    mailSyncRepository: createFakeMailSyncRepository().repository,
+  };
 }

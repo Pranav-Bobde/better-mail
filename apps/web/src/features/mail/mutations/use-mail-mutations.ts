@@ -12,7 +12,10 @@ import {
   type QueryKey,
 } from "@tanstack/react-query";
 
-import { shouldAutoMarkThreadRead } from "@/features/mail/mutations/auto-mark-read";
+import {
+  resetAutoMarkGuardForSelection,
+  shouldAutoMarkThreadRead,
+} from "@/features/mail/mutations/auto-mark-read";
 import {
   createDraftIdLookup,
   getDraftThreadId,
@@ -26,8 +29,10 @@ import {
   type GetMailboxOutput,
 } from "@/features/mail/mutations/mailbox-cache";
 import {
-  getMirrorWriteWarning,
+  getCacheWriteWarning,
   getMutationErrorPresentation,
+  shouldInvalidateAfterCacheWrite,
+  shouldRefreshDraftQueriesAfterMutation,
 } from "@/features/mail/mutations/mutation-result";
 import { reconnectGoogleAccount } from "@/features/mail/mutations/reconnect-google";
 import { orpc } from "@/shared/utils/orpc";
@@ -70,7 +75,9 @@ function invalidateMailboxAndThread(queryClient: QueryClient, threadId: string) 
   });
 }
 
-export function useSetThreadReadMutation() {
+export function useSetThreadReadMutation(
+  options: { readonly suppressCacheWarning?: boolean } = {},
+) {
   const queryClient = useQueryClient();
 
   return useMutation(
@@ -102,16 +109,20 @@ export function useSetThreadReadMutation() {
           return;
         }
 
-        // Gmail took the change but the cache mirror missed it: the optimistic
+        // Gmail took the change but the cache write missed it: the optimistic
         // state may briefly revert on refetch, so say so instead of staying
         // silent.
-        const mirrorWarning = getMirrorWriteWarning(result);
-        if (mirrorWarning) {
-          toast.warning(mirrorWarning);
+        const cacheWarning = getCacheWriteWarning(result, {
+          suppress: options.suppressCacheWarning,
+        });
+        if (cacheWarning) {
+          toast.warning(cacheWarning);
         }
       },
-      onSettled: (_result, _error, input) => {
-        invalidateMailboxAndThread(queryClient, input.threadId);
+      onSettled: (result, _error, input) => {
+        if (shouldInvalidateAfterCacheWrite(result)) {
+          invalidateMailboxAndThread(queryClient, input.threadId);
+        }
       },
     }),
   );
@@ -153,49 +164,65 @@ export function useArchiveThreadMutation(folder: MailFolder) {
           return;
         }
 
-        // The archive reached Gmail either way; when the cache mirror missed
+        // The archive reached Gmail either way; when the cache write missed
         // it, the warning replaces the plain success toast so the user knows
         // the thread may briefly pop back into the inbox.
-        const mirrorWarning = getMirrorWriteWarning(result);
-        if (mirrorWarning) {
-          toast.warning(mirrorWarning);
+        const cacheWarning = getCacheWriteWarning(result);
+        if (cacheWarning) {
+          toast.warning(cacheWarning);
           return;
         }
 
         toast.success("Conversation archived");
       },
-      onSettled: (_result, _error, input) => {
-        invalidateMailboxAndThread(queryClient, input.threadId);
+      onSettled: (result, _error, input) => {
+        if (shouldInvalidateAfterCacheWrite(result)) {
+          invalidateMailboxAndThread(queryClient, input.threadId);
+        }
       },
     }),
   );
 }
 
-// Auto-mark an opened unread thread as read — new intentional behavior. The
-// ref guard fires at most once per thread selection, so an optimistic rollback
-// (or a manual "Mark as unread") cannot retrigger it while the same thread
-// stays selected.
+// Auto-mark an opened unread thread as read. The ref prevents rollback loops;
+// manualUnreadThreadIds preserve explicit unread toggles until user intent
+// explicitly clears them.
 export function useAutoMarkThreadRead(
   selectedThread: { readonly read: boolean; readonly threadId: string } | null,
   setThreadRead: (input: { readonly read: boolean; readonly threadId: string }) => void,
+  manualUnreadThreadIds: ReadonlySet<string> = new Set(),
 ) {
   const lastAutoMarkedThreadIdRef = React.useRef<string | null>(null);
+  const previousSelectedThreadIdRef = React.useRef<string | null>(null);
   const selectedThreadId = selectedThread?.threadId ?? null;
   const isSelectedThreadUnread = selectedThread !== null && !selectedThread.read;
 
   React.useEffect(() => {
+    lastAutoMarkedThreadIdRef.current = resetAutoMarkGuardForSelection(
+      selectedThreadId,
+      previousSelectedThreadIdRef.current,
+      lastAutoMarkedThreadIdRef.current,
+    );
+    previousSelectedThreadIdRef.current = selectedThreadId;
+
     if (selectedThreadId === null || !isSelectedThreadUnread) {
       return;
     }
 
     const selectedUnreadThread = { read: false, threadId: selectedThreadId };
-    if (!shouldAutoMarkThreadRead(selectedUnreadThread, lastAutoMarkedThreadIdRef.current)) {
+    if (
+      !shouldAutoMarkThreadRead(
+        selectedUnreadThread,
+        lastAutoMarkedThreadIdRef.current,
+        manualUnreadThreadIds,
+      )
+    ) {
       return;
     }
 
     lastAutoMarkedThreadIdRef.current = selectedThreadId;
     setThreadRead({ read: true, threadId: selectedThreadId });
-  }, [isSelectedThreadUnread, selectedThreadId, setThreadRead]);
+  }, [isSelectedThreadUnread, manualUnreadThreadIds, selectedThreadId, setThreadRead]);
 }
 
 function invalidateMailboxAndDrafts(queryClient: QueryClient) {
@@ -217,8 +244,16 @@ export function useCreateDraftMutation() {
           return;
         }
 
-        toast.success("Draft saved");
-        invalidateMailboxAndDrafts(queryClient);
+        const cacheWarning = getCacheWriteWarning(result);
+        if (cacheWarning) {
+          toast.warning(cacheWarning);
+        } else {
+          toast.success("Draft saved");
+        }
+
+        if (shouldRefreshDraftQueriesAfterMutation(result)) {
+          invalidateMailboxAndDrafts(queryClient);
+        }
       },
     }),
   );
@@ -238,8 +273,16 @@ export function useUpdateDraftMutation() {
           return;
         }
 
-        toast.success("Draft saved");
-        invalidateMailboxAndDrafts(queryClient);
+        const cacheWarning = getCacheWriteWarning(result);
+        if (cacheWarning) {
+          toast.warning(cacheWarning);
+        } else {
+          toast.success("Draft saved");
+        }
+
+        if (shouldRefreshDraftQueriesAfterMutation(result)) {
+          invalidateMailboxAndDrafts(queryClient);
+        }
       },
     }),
   );
@@ -289,10 +332,18 @@ export function useDeleteDraftMutation() {
           return;
         }
 
+        const cacheWarning = getCacheWriteWarning(result);
+        if (cacheWarning) {
+          toast.warning(cacheWarning);
+          return;
+        }
+
         toast.success("Draft deleted");
       },
-      onSettled: () => {
-        invalidateMailboxAndDrafts(queryClient);
+      onSettled: (result) => {
+        if (shouldInvalidateAfterCacheWrite(result)) {
+          invalidateMailboxAndDrafts(queryClient);
+        }
       },
     }),
   );

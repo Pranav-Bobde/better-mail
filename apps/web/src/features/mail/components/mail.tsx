@@ -84,7 +84,11 @@ import {
 } from "@/features/mail/components/mail-layout";
 import { MailList } from "@/features/mail/components/mail-list";
 import { MailLoading } from "@/features/mail/components/mail-loading";
-import { createMailboxQueryOptions } from "@/features/mail/components/mailbox-query-options";
+import {
+  createMailboxQueryOptions,
+  shouldShowMailboxTransitionLoading,
+} from "@/features/mail/components/mailbox-query-options";
+import { refetchMailboxQuery } from "@/features/mail/components/mailbox-refetch";
 import { Nav, type NavLink } from "@/features/mail/components/nav";
 import {
   createComposeStateFromDraftMessage,
@@ -94,7 +98,13 @@ import {
   getDeleteAccountErrorMessage,
   getDeleteAccountLabel,
 } from "@/features/mail/mutations/delete-account";
+import { setManualUnreadIntent } from "@/features/mail/mutations/auto-mark-read";
 import { resolveDraftId } from "@/features/mail/mutations/draft-lookup";
+import {
+  getCacheWriteWarning,
+  getMutationErrorPresentation,
+  shouldInvalidateAfterCacheWrite,
+} from "@/features/mail/mutations/mutation-result";
 import { reconnectGoogleAccount } from "@/features/mail/mutations/reconnect-google";
 import {
   useArchiveThreadMutation,
@@ -185,6 +195,9 @@ function MailWorkspace({
   const [isAiOpen, setIsAiOpen] = React.useState(false);
   const [searchInput, setSearchInput] = React.useState("");
   const [searchQuery, setSearchQuery] = React.useState("");
+  const [manualUnreadThreadIds, setManualUnreadThreadIds] = React.useState<ReadonlySet<string>>(
+    new Set(),
+  );
   const [view, setView] = React.useState<MailView>("all");
   const [compose, setCompose] = React.useState<ComposeState>(emptyComposeState);
   const [composeNotice, setComposeNotice] = React.useState("");
@@ -222,12 +235,14 @@ function MailWorkspace({
   const {
     errorMessage: mailboxErrorMessage,
     isFetching: isMailboxFetching,
+    isTransitioning: isMailboxTransitioning,
     mailbox,
     isInitialLoading: isMailboxInitialLoading,
     refetchMailbox,
   } = useMailboxData(searchQuery, view, folder);
   const sendMailMutation = useSendReplyMutation();
   const setThreadReadMutation = useSetThreadReadMutation();
+  const autoSetThreadReadMutation = useSetThreadReadMutation({ suppressCacheWarning: true });
   const archiveThreadMutation = useArchiveThreadMutation(folder);
   const createDraftMutation = useCreateDraftMutation();
   const updateDraftMutation = useUpdateDraftMutation();
@@ -271,7 +286,11 @@ function MailWorkspace({
   useSelectedMailSync(activeMails, selected, setSelected);
   // Opening an unread thread marks it read (new intentional behavior). Gated
   // on a real mailbox so the demo fallback list never fires Gmail mutations.
-  useAutoMarkThreadRead(getAutoMarkReadTarget(mailbox, selectedMail), setThreadReadMutation.mutate);
+  useAutoMarkThreadRead(
+    getAutoMarkReadTarget(mailbox, selectedMail),
+    autoSetThreadReadMutation.mutate,
+    manualUnreadThreadIds,
+  );
   usePendingOpenLatest(
     activeMails,
     mailbox,
@@ -313,12 +332,21 @@ function MailWorkspace({
   // Opening a message must dismiss the compose form — otherwise the compose
   // panel stays mounted over the detail pane and the clicked email appears to do
   // nothing (it opens "behind" compose).
-  const handleSelectMail = React.useCallback((id: MailItem["id"] | null) => {
-    setSelected(id);
-    setCompose(emptyComposeState);
-    setComposeNotice("");
-    setEditingDraftId(null);
-  }, []);
+  const handleSelectMail = React.useCallback(
+    (id: MailItem["id"] | null) => {
+      const explicitlyOpenedThreadId = activeMails.find((mail) => mail.id === id)?.threadId;
+      if (explicitlyOpenedThreadId) {
+        setManualUnreadThreadIds((current) =>
+          setManualUnreadIntent(current, explicitlyOpenedThreadId, false),
+        );
+      }
+      setSelected(id);
+      setCompose(emptyComposeState);
+      setComposeNotice("");
+      setEditingDraftId(null);
+    },
+    [activeMails],
+  );
 
   const openDraftInCompose = React.useCallback(
     (draft: DraftEmailInput) => {
@@ -490,8 +518,12 @@ function MailWorkspace({
       return;
     }
 
+    const read = !selectedMail.read;
+    setManualUnreadThreadIds((current) =>
+      setManualUnreadIntent(current, selectedMail.threadId, !read),
+    );
     setThreadReadMutation.mutate({
-      read: !selectedMail.read,
+      read,
       threadId: selectedMail.threadId,
     });
   }
@@ -523,11 +555,11 @@ function MailWorkspace({
   function deleteSelectedDraft() {
     const draftId = getSelectedDraftId();
 
-    if (draftId === null) {
+    if (draftId === null || selectedMail === null) {
       return;
     }
 
-    deleteDraftMutation.mutate({ draftId });
+    deleteDraftMutation.mutate({ draftId, threadId: selectedMail.threadId });
   }
 
   function editSelectedDraft() {
@@ -617,6 +649,7 @@ function MailWorkspace({
           folderTitle={getFolderTitle(folder)}
           isAiOpen={isAiOpen}
           isMailboxFetching={isMailboxFetching}
+          isMailboxTransitioning={isMailboxTransitioning}
           onOpenCompose={openCompose}
           onRefreshMailbox={refetchMailbox}
           onSearchInputChange={setSearchInput}
@@ -676,6 +709,7 @@ function MailListPanel({
   folderTitle,
   isAiOpen,
   isMailboxFetching,
+  isMailboxTransitioning,
   mailboxErrorMessage,
   onOpenCompose,
   onRefreshMailbox,
@@ -694,6 +728,7 @@ function MailListPanel({
   readonly folderTitle: string;
   readonly isAiOpen: boolean;
   readonly isMailboxFetching: boolean;
+  readonly isMailboxTransitioning: boolean;
   readonly mailboxErrorMessage: string | null;
   readonly onOpenCompose: () => void;
   readonly onRefreshMailbox: () => void;
@@ -731,21 +766,49 @@ function MailListPanel({
           searchInput={searchInput}
         />
         <TabsContent className="m-0 min-h-0 flex-1" value="all">
-          {mailboxErrorMessage ? (
-            <MailboxErrorState message={mailboxErrorMessage} />
-          ) : (
-            <MailList items={searchFilteredMails} onSelect={onSelectMail} selected={selected} />
-          )}
+          <MailboxListContent
+            errorMessage={mailboxErrorMessage}
+            isTransitioning={isMailboxTransitioning}
+            items={searchFilteredMails}
+            onSelect={onSelectMail}
+            selected={selected}
+          />
         </TabsContent>
         <TabsContent className="m-0 min-h-0 flex-1" value="unread">
-          {mailboxErrorMessage ? (
-            <MailboxErrorState message={mailboxErrorMessage} />
-          ) : (
-            <MailList items={visibleMails} onSelect={onSelectMail} selected={selected} />
-          )}
+          <MailboxListContent
+            errorMessage={mailboxErrorMessage}
+            isTransitioning={isMailboxTransitioning}
+            items={visibleMails}
+            onSelect={onSelectMail}
+            selected={selected}
+          />
         </TabsContent>
       </Tabs>
     </ResizablePanel>
+  );
+}
+
+function MailboxListContent({
+  errorMessage,
+  isTransitioning,
+  items,
+  onSelect,
+  selected,
+}: {
+  readonly errorMessage: string | null;
+  readonly isTransitioning: boolean;
+  readonly items: readonly MailItem[];
+  readonly onSelect: (id: MailItem["id"] | null) => void;
+  readonly selected: MailItem["id"] | null;
+}) {
+  if (isTransitioning) {
+    return <MailLoading />;
+  }
+
+  return errorMessage ? (
+    <MailboxErrorState message={errorMessage} />
+  ) : (
+    <MailList items={items} onSelect={onSelect} selected={selected} />
   );
 }
 
@@ -1059,8 +1122,10 @@ function isUnreadMail(item: MailItem) {
 }
 
 function useMailboxData(searchQuery: string, view: MailView, folder: MailFolder) {
+  const queryClient = useQueryClient();
+  const mailboxQueryInput = { folder, searchQuery, view };
   const mailboxQuery = useQuery(
-    orpc.mail.getMailbox.queryOptions(createMailboxQueryOptions({ folder, searchQuery, view })),
+    orpc.mail.getMailbox.queryOptions(createMailboxQueryOptions(mailboxQueryInput)),
   );
 
   const mailbox = mailboxQuery.data?.status === "ok" ? mailboxQuery.data.data : null;
@@ -1071,9 +1136,10 @@ function useMailboxData(searchQuery: string, view: MailView, folder: MailFolder)
     // True only for the very first load, before any response has arrived.
     isInitialLoading: mailboxQuery.isLoading,
     isFetching: mailboxQuery.isFetching,
+    isTransitioning: shouldShowMailboxTransitionLoading(mailboxQuery),
     mailbox,
     refetchMailbox: () => {
-      void mailboxQuery.refetch();
+      void refetchMailboxQuery(queryClient, mailboxQueryInput, "mailbox.refresh");
     },
   };
 }
@@ -1155,11 +1221,25 @@ function useSendReplyMutation() {
       onError: (error) => {
         toast.error(`Error: ${error.message}`);
       },
-      onSuccess: () => {
+      onSuccess: (result) => {
+        if (result.status === "error") {
+          const presentation = getMutationErrorPresentation(result.error);
+          toast.error(presentation.message);
+          return;
+        }
+
+        const cacheWarning = getCacheWriteWarning(result);
+        if (cacheWarning) {
+          toast.warning(cacheWarning);
+          return;
+        }
+
         toast.success("Email sent");
-        queryClient.invalidateQueries({
-          queryKey: orpc.mail.getMailbox.key(),
-        });
+        if (shouldInvalidateAfterCacheWrite(result)) {
+          queryClient.invalidateQueries({
+            queryKey: orpc.mail.getMailbox.key(),
+          });
+        }
       },
     }),
   );

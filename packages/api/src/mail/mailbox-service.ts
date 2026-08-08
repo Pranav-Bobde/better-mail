@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Schedule } from "effect";
 import { EvlogError } from "evlog";
 
 import { isEvlogError, runPromiseRaw, tryPromiseExpecting } from "../effect-interop";
@@ -10,9 +10,12 @@ import {
   GmailClient,
   createGmailDraft,
   deleteGmailDraft,
+  getGmailDraft,
+  getGmailDraftIfExists,
   getGmailLabel,
   getGmailProfile,
   getGmailThread,
+  getGmailThreadIfExists,
   listGmailDrafts,
   listGmailLabels,
   listGmailThreads,
@@ -32,6 +35,7 @@ import type { GmailLabel, GmailMessage, GmailThread } from "./gmail-schemas";
 import { getDisplayLabels } from "./label-presentation";
 
 const mailboxMaxResults = 20;
+const mailboxSyncFreshnessWindowMs = 60_000;
 const gmailUserId = "me";
 const gmailReadonlyScope = "https://www.googleapis.com/auth/gmail.readonly";
 const gmailSendScope = "https://www.googleapis.com/auth/gmail.send";
@@ -49,16 +53,20 @@ const mimeHeaderBase64MaxLength =
   mimeHeaderEncodedWordPrefix.length -
   mimeHeaderEncodedWordSuffix.length;
 const mimeHeaderBase64ChunkMaxLength = Math.floor(mimeHeaderBase64MaxLength / 4) * 4;
-// Internal retries for the post-Gmail cache mirror write before the request
-// gives up and reports mirrorApplied: false (AGENTS.md internal API rules).
-const mirrorWriteMaxAttempts = 3;
+// Internal retries for the post-Gmail cache write before the request
+// gives up and reports cacheApplied: false (AGENTS.md internal API rules).
+const cacheWriteMaxAttempts = 3;
+const cacheWriteRetrySchedule = Schedule.max([
+  Schedule.exponential("1 second"),
+  Schedule.recurs(cacheWriteMaxAttempts - 1),
+]);
 
 type MailSyncRepositoryPort = NonNullable<AuthContext["mailSyncRepository"]>;
 
 /**
- * Context for mail mutations that write through to the local cache mirror.
+ * Context for mail mutations that write through to the local cache.
  * The repository and session are REQUIRED at the type level so a missing
- * mirror write can no longer compile as a silent no-op — an optional
+ * cache write can no longer compile as a silent no-op — an optional
  * `mailSyncRepository` is exactly how the stale-cache revert bug shipped.
  */
 export type MailMutationAuthContext = Omit<AuthContext, "mailSyncRepository" | "session"> & {
@@ -136,6 +144,7 @@ type UpdateMailboxDraftInput = {
 };
 type DeleteMailboxDraftInput = {
   readonly draftId: string;
+  readonly threadId: string;
 };
 
 type MailboxServiceRequests = {
@@ -145,11 +154,11 @@ type MailboxServiceRequests = {
   ) => Effect.Effect<Awaited<ReturnType<typeof archiveMailboxThread>>, EvlogError>;
   readonly createMailboxDraft: (
     input: CreateMailboxDraftInput,
-    authContext: AuthContext,
+    authContext: MailMutationAuthContext,
   ) => Effect.Effect<Awaited<ReturnType<typeof createMailboxDraft>>, EvlogError>;
   readonly deleteMailboxDraft: (
     input: DeleteMailboxDraftInput,
-    authContext: AuthContext,
+    authContext: MailMutationAuthContext,
   ) => Effect.Effect<Awaited<ReturnType<typeof deleteMailboxDraft>>, EvlogError>;
   readonly getMailboxData: (
     input: MailboxDataInput,
@@ -164,7 +173,7 @@ type MailboxServiceRequests = {
   ) => Effect.Effect<Awaited<ReturnType<typeof listMailboxDrafts>>, EvlogError>;
   readonly sendMailboxMessage: (
     input: SendMailboxMessageInput,
-    authContext: AuthContext,
+    authContext: MailMutationAuthContext,
   ) => Effect.Effect<Awaited<ReturnType<typeof sendMailboxMessage>>, EvlogError>;
   readonly setMailboxThreadReadState: (
     input: SetMailboxThreadReadStateInput,
@@ -172,7 +181,7 @@ type MailboxServiceRequests = {
   ) => Effect.Effect<Awaited<ReturnType<typeof setMailboxThreadReadState>>, EvlogError>;
   readonly updateMailboxDraft: (
     input: UpdateMailboxDraftInput,
-    authContext: AuthContext,
+    authContext: MailMutationAuthContext,
   ) => Effect.Effect<Awaited<ReturnType<typeof updateMailboxDraft>>, EvlogError>;
 };
 
@@ -181,9 +190,12 @@ type MailboxServiceRequests = {
 type MailboxGmailRequests = {
   readonly createDraft: typeof createGmailDraft;
   readonly deleteDraft: typeof deleteGmailDraft;
+  readonly getDraft: typeof getGmailDraft;
+  readonly getDraftIfExists: typeof getGmailDraftIfExists;
   readonly getLabel: typeof getGmailLabel;
   readonly getProfile: typeof getGmailProfile;
   readonly getThread: typeof getGmailThread;
+  readonly getThreadIfExists: typeof getGmailThreadIfExists;
   readonly listDrafts: typeof listGmailDrafts;
   readonly listLabels: typeof listGmailLabels;
   readonly listThreads: typeof listGmailThreads;
@@ -233,11 +245,17 @@ function createEffectGmailRequests(gmailClient: Context.Service.Shape<typeof Gma
   return {
     createDraft: (input) => runPromiseRaw(gmailClient.createDraft(input)),
     deleteDraft: (input) => runPromiseRaw(gmailClient.deleteDraft(input)),
+    getDraft: (accessToken, userId, draftId) =>
+      runPromiseRaw(gmailClient.getDraft(accessToken, userId, draftId)),
+    getDraftIfExists: (accessToken, userId, draftId) =>
+      runPromiseRaw(gmailClient.getDraftIfExists(accessToken, userId, draftId)),
     getLabel: (accessToken, userId, labelId) =>
       runPromiseRaw(gmailClient.getLabel(accessToken, userId, labelId)),
     getProfile: (accessToken, userId) => runPromiseRaw(gmailClient.getProfile(accessToken, userId)),
     getThread: (accessToken, userId, threadId) =>
       runPromiseRaw(gmailClient.getThread(accessToken, userId, threadId)),
+    getThreadIfExists: (accessToken, userId, threadId) =>
+      runPromiseRaw(gmailClient.getThreadIfExists(accessToken, userId, threadId)),
     listDrafts: (accessToken, userId) => runPromiseRaw(gmailClient.listDrafts(accessToken, userId)),
     listLabels: (accessToken, userId) => runPromiseRaw(gmailClient.listLabels(accessToken, userId)),
     listThreads: (input) => runPromiseRaw(gmailClient.listThreads(input)),
@@ -250,9 +268,12 @@ function createEffectGmailRequests(gmailClient: Context.Service.Shape<typeof Gma
 const rawGmailRequests = {
   createDraft: createGmailDraft,
   deleteDraft: deleteGmailDraft,
+  getDraft: getGmailDraft,
+  getDraftIfExists: getGmailDraftIfExists,
   getLabel: getGmailLabel,
   getProfile: getGmailProfile,
   getThread: getGmailThread,
+  getThreadIfExists: getGmailThreadIfExists,
   listDrafts: listGmailDrafts,
   listLabels: listGmailLabels,
   listThreads: listGmailThreads,
@@ -351,10 +372,20 @@ async function getMailboxDataWithGmail(
   const cachedMailboxData = await getCachedMailboxData(mailboxInput, authContext);
 
   if (cachedMailboxData) {
-    await enqueueMailboxSyncIfAvailable(authContext, {
-      mailAccountId: cachedMailboxData.mailAccountId,
-      type: "GMAIL_INCREMENTAL_SYNC_REQUESTED",
-    });
+    if (shouldEnqueueCachedMailboxSync(cachedMailboxData.lastSuccessfulSyncAt, new Date())) {
+      await enqueueMailboxSyncIfAvailable(authContext, {
+        mailAccountId: cachedMailboxData.mailAccountId,
+        type: "GMAIL_INCREMENTAL_SYNC_REQUESTED",
+      });
+    } else {
+      authContext.log?.set({
+        mailSyncEnqueue: {
+          eventType: "GMAIL_INCREMENTAL_SYNC_REQUESTED",
+          mailAccountId: cachedMailboxData.mailAccountId,
+          outcome: "skipped_recent_sync",
+        },
+      });
+    }
 
     return {
       data: {
@@ -409,8 +440,17 @@ async function getCachedMailboxData(
 
   return {
     data: cachedMailbox.data,
+    lastSuccessfulSyncAt: cachedMailbox.lastSuccessfulSyncAt,
     mailAccountId: cachedMailbox.mailAccountId,
   };
+}
+
+export function shouldEnqueueCachedMailboxSync(lastSuccessfulSyncAt: Date | null, now: Date) {
+  if (!lastSuccessfulSyncAt) {
+    return true;
+  }
+
+  return now.getTime() - lastSuccessfulSyncAt.getTime() >= mailboxSyncFreshnessWindowMs;
 }
 
 async function getMailboxBaseData(
@@ -555,13 +595,16 @@ async function enqueueMailboxSyncIfAvailable(
   }
 }
 
-export async function sendMailboxMessage(input: SendMailboxMessageInput, authContext: AuthContext) {
+export async function sendMailboxMessage(
+  input: SendMailboxMessageInput,
+  authContext: MailMutationAuthContext,
+) {
   return sendMailboxMessageWithGmail(input, authContext, rawGmailRequests);
 }
 
 async function sendMailboxMessageWithGmail(
   input: SendMailboxMessageInput,
-  authContext: AuthContext,
+  authContext: MailMutationAuthContext,
   gmail: MailboxGmailRequests,
 ) {
   const credentials = await getGmailCredentials(authContext, [gmailSendScope]);
@@ -571,9 +614,17 @@ async function sendMailboxMessageWithGmail(
     threadId: input.threadId,
     userId: gmailUserId,
   });
+  const cacheApplied = await reconcileCachedGmailThreadBestEffort(
+    authContext,
+    credentials.accessToken,
+    gmail,
+    "send",
+    sentMessage.threadId,
+  );
 
   return {
     data: {
+      cacheApplied,
       messageId: sentMessage.id,
       threadId: sentMessage.threadId,
     },
@@ -595,29 +646,37 @@ async function setMailboxThreadReadStateWithGmail(
 ) {
   const credentials = await getGmailCredentials(authContext, [gmailModifyScope]);
 
-  await gmail.modifyThread({
+  const modifiedThread = await gmail.modifyThread({
     accessToken: credentials.accessToken,
     threadId: input.threadId,
     userId: gmailUserId,
     ...(input.read ? { removeLabelIds: [unreadLabelId] } : { addLabelIds: [unreadLabelId] }),
   });
 
-  // Write-through: getMailboxData is cache-first, so without this mirror write
+  // Write-through: getMailboxData is cache-first, so without this cache write
   // the mutation's own refetch would serve the stale rows and revert the UI.
-  const mirrorApplied = await applyMirrorWriteBestEffort(
+  const cacheApplied = await applyCacheWriteBestEffort(
     authContext,
     { operation: "setThreadRead", threadId: input.threadId },
-    () =>
-      authContext.mailSyncRepository.markCachedThreadReadState({
+    async () => {
+      const historyId = await getGmailMutationHistoryId(
+        modifiedThread.historyId,
+        credentials.accessToken,
+        gmail,
+        input.threadId,
+      );
+      await authContext.mailSyncRepository.markCachedThreadReadState({
+        historyId,
         read: input.read,
         threadId: input.threadId,
         userId: authContext.session.user.id,
-      }),
+      });
+    },
   );
 
   return {
     data: {
-      mirrorApplied,
+      cacheApplied,
       read: input.read,
       threadId: input.threadId,
     },
@@ -639,74 +698,153 @@ async function archiveMailboxThreadWithGmail(
 ) {
   const credentials = await getGmailCredentials(authContext, [gmailModifyScope]);
 
-  await gmail.modifyThread({
+  const modifiedThread = await gmail.modifyThread({
     accessToken: credentials.accessToken,
     removeLabelIds: [inboxLabelId],
     threadId: input.threadId,
     userId: gmailUserId,
   });
 
-  const mirrorApplied = await applyMirrorWriteBestEffort(
+  const cacheApplied = await applyCacheWriteBestEffort(
     authContext,
     { operation: "archiveThread", threadId: input.threadId },
-    () =>
-      authContext.mailSyncRepository.markCachedThreadArchived({
+    async () => {
+      const historyId = await getGmailMutationHistoryId(
+        modifiedThread.historyId,
+        credentials.accessToken,
+        gmail,
+        input.threadId,
+      );
+      await authContext.mailSyncRepository.markCachedThreadArchived({
+        historyId,
         threadId: input.threadId,
         userId: authContext.session.user.id,
-      }),
+      });
+    },
   );
 
   return {
     data: {
-      mirrorApplied,
+      cacheApplied,
       threadId: input.threadId,
     },
     status: "ok" as const,
   };
 }
 
-// Gmail already accepted the change and stays the source of truth, so a mirror
+// Gmail already accepted the change and stays the source of truth, so a cache
 // miss must NOT fail the request: retry internally, then log the miss with
-// full operator context and report mirrorApplied: false so the UI can warn
+// full operator context and report cacheApplied: false so the UI can warn
 // the user the change may briefly reappear until the next sync heals it.
-async function applyMirrorWriteBestEffort(
+async function applyCacheWriteBestEffort(
   authContext: MailMutationAuthContext,
-  event: { readonly operation: "archiveThread" | "setThreadRead"; readonly threadId: string },
+  event: {
+    readonly operation:
+      | "archiveThread"
+      | "createDraft"
+      | "deleteDraft"
+      | "send"
+      | "setThreadRead"
+      | "updateDraft";
+    readonly threadId: string;
+  },
   write: () => Promise<void>,
 ) {
   let lastError: unknown;
+  let attempts = 0;
 
-  for (let attempt = 1; attempt <= mirrorWriteMaxAttempts; attempt += 1) {
-    try {
-      await write();
-      return true;
-    } catch (error) {
-      lastError = error;
-    }
+  try {
+    await Effect.runPromise(
+      Effect.tryPromise({
+        catch: (error) => {
+          lastError = error;
+          return error;
+        },
+        try: async () => {
+          attempts += 1;
+          await write();
+        },
+      }).pipe(Effect.retry(cacheWriteRetrySchedule)),
+    );
+    return true;
+  } catch {
+    authContext.log?.set({
+      mailCachedWrite: {
+        attempts,
+        errorMessage: lastError instanceof Error ? lastError.message : String(lastError),
+        errorName: lastError instanceof Error ? lastError.name : "UnknownError",
+        operation: event.operation,
+        outcome: "failed",
+        threadId: event.threadId,
+        userId: authContext.session.user.id,
+      },
+    });
+
+    return false;
   }
-
-  authContext.log?.set({
-    mailMirrorWrite: {
-      attempts: mirrorWriteMaxAttempts,
-      errorMessage: lastError instanceof Error ? lastError.message : String(lastError),
-      errorName: lastError instanceof Error ? lastError.name : "UnknownError",
-      operation: event.operation,
-      outcome: "failed",
-      threadId: event.threadId,
-      userId: authContext.session.user.id,
-    },
-  });
-
-  return false;
 }
 
-export async function createMailboxDraft(input: CreateMailboxDraftInput, authContext: AuthContext) {
+async function reconcileCachedGmailThreadBestEffort(
+  authContext: MailMutationAuthContext,
+  accessToken: string,
+  gmail: MailboxGmailRequests,
+  operation: "createDraft" | "deleteDraft" | "send" | "updateDraft",
+  threadId: string,
+  options: { readonly allowMissing?: boolean } = {},
+) {
+  return applyCacheWriteBestEffort(authContext, { operation, threadId }, async () => {
+    // Capture the mailbox high-water before the existence check. It is only a
+    // conditional-delete ceiling: never persist this mailbox-wide value in the
+    // thread-scoped providerHistoryId column.
+    const deletionFenceHistoryId = options.allowMissing
+      ? (await gmail.getProfile(accessToken, gmailUserId)).historyId
+      : undefined;
+
+    if (options.allowMissing && !deletionFenceHistoryId) {
+      throw new Error(`Gmail profile did not include a historyId after deleting ${threadId}`);
+    }
+
+    const thread = options.allowMissing
+      ? await gmail.getThreadIfExists(accessToken, gmailUserId, threadId)
+      : await gmail.getThread(accessToken, gmailUserId, threadId);
+
+    await authContext.mailSyncRepository.reconcileCachedGmailThread({
+      ...(thread === null && deletionFenceHistoryId ? { deletionFenceHistoryId } : {}),
+      thread,
+      threadId,
+      userId: authContext.session.user.id,
+    });
+  });
+}
+
+async function getGmailMutationHistoryId(
+  responseHistoryId: string | undefined,
+  accessToken: string,
+  gmail: MailboxGmailRequests,
+  threadId: string,
+) {
+  if (responseHistoryId) {
+    return responseHistoryId;
+  }
+
+  const thread = await gmail.getThread(accessToken, gmailUserId, threadId);
+  if (!thread.historyId) {
+    throw new Error(`Gmail thread ${threadId} did not include a historyId`);
+  }
+
+  return thread.historyId;
+}
+
+export async function createMailboxDraft(
+  input: CreateMailboxDraftInput,
+  authContext: MailMutationAuthContext,
+) {
   return createMailboxDraftWithGmail(input, authContext, rawGmailRequests);
 }
 
 async function createMailboxDraftWithGmail(
   input: CreateMailboxDraftInput,
-  authContext: AuthContext,
+  authContext: MailMutationAuthContext,
   gmail: MailboxGmailRequests,
 ) {
   const credentials = await getGmailCredentials(authContext, [gmailModifyScope]);
@@ -716,20 +854,31 @@ async function createMailboxDraftWithGmail(
     threadId: input.threadId,
     userId: gmailUserId,
   });
+  const cacheApplied = await reconcileCachedGmailThreadBestEffort(
+    authContext,
+    credentials.accessToken,
+    gmail,
+    "createDraft",
+    draft.message.threadId,
+  );
 
-  return createDraftSuccessData(draft);
+  return createDraftSuccessData(draft, cacheApplied);
 }
 
-export async function updateMailboxDraft(input: UpdateMailboxDraftInput, authContext: AuthContext) {
+export async function updateMailboxDraft(
+  input: UpdateMailboxDraftInput,
+  authContext: MailMutationAuthContext,
+) {
   return updateMailboxDraftWithGmail(input, authContext, rawGmailRequests);
 }
 
 async function updateMailboxDraftWithGmail(
   input: UpdateMailboxDraftInput,
-  authContext: AuthContext,
+  authContext: MailMutationAuthContext,
   gmail: MailboxGmailRequests,
 ) {
   const credentials = await getGmailCredentials(authContext, [gmailModifyScope]);
+  const previousDraft = await gmail.getDraft(credentials.accessToken, gmailUserId, input.draftId);
   const draft = await gmail.updateDraft({
     accessToken: credentials.accessToken,
     draftId: input.draftId,
@@ -737,16 +886,38 @@ async function updateMailboxDraftWithGmail(
     threadId: input.threadId,
     userId: gmailUserId,
   });
+  const replacementCacheApplied = await reconcileCachedGmailThreadBestEffort(
+    authContext,
+    credentials.accessToken,
+    gmail,
+    "updateDraft",
+    draft.message.threadId,
+  );
+  const replacedThreadCacheApplied =
+    previousDraft.message.threadId === draft.message.threadId
+      ? true
+      : await reconcileCachedGmailThreadBestEffort(
+          authContext,
+          credentials.accessToken,
+          gmail,
+          "updateDraft",
+          previousDraft.message.threadId,
+          { allowMissing: true },
+        );
 
-  return createDraftSuccessData(draft);
+  return createDraftSuccessData(draft, replacementCacheApplied && replacedThreadCacheApplied);
 }
 
-function createDraftSuccessData(draft: {
-  readonly id: string;
-  readonly message: { readonly id: string; readonly threadId: string };
-}) {
+function createDraftSuccessData(
+  draft: {
+    readonly id: string;
+    readonly message: { readonly id: string; readonly threadId: string };
+  },
+  cacheApplied: boolean,
+) {
   return {
     data: {
+      cacheApplied,
       draftId: draft.id,
       messageId: draft.message.id,
       threadId: draft.message.threadId,
@@ -755,26 +926,43 @@ function createDraftSuccessData(draft: {
   };
 }
 
-export async function deleteMailboxDraft(input: DeleteMailboxDraftInput, authContext: AuthContext) {
+export async function deleteMailboxDraft(
+  input: DeleteMailboxDraftInput,
+  authContext: MailMutationAuthContext,
+) {
   return deleteMailboxDraftWithGmail(input, authContext, rawGmailRequests);
 }
 
 async function deleteMailboxDraftWithGmail(
   input: DeleteMailboxDraftInput,
-  authContext: AuthContext,
+  authContext: MailMutationAuthContext,
   gmail: MailboxGmailRequests,
 ) {
   const credentials = await getGmailCredentials(authContext, [gmailModifyScope]);
+  const draft = await gmail.getDraftIfExists(credentials.accessToken, gmailUserId, input.draftId);
+  const threadId = draft?.message.threadId ?? input.threadId;
 
-  await gmail.deleteDraft({
-    accessToken: credentials.accessToken,
-    draftId: input.draftId,
-    userId: gmailUserId,
-  });
+  if (draft !== null) {
+    await gmail.deleteDraft({
+      accessToken: credentials.accessToken,
+      draftId: input.draftId,
+      userId: gmailUserId,
+    });
+  }
+  const cacheApplied = await reconcileCachedGmailThreadBestEffort(
+    authContext,
+    credentials.accessToken,
+    gmail,
+    "deleteDraft",
+    threadId,
+    { allowMissing: true },
+  );
 
   return {
     data: {
+      cacheApplied,
       draftId: input.draftId,
+      threadId,
     },
     status: "ok" as const,
   };

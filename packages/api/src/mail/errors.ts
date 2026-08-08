@@ -45,6 +45,28 @@ export const mailErrors = defineErrorCatalog("mail", {
       module: "mail",
     },
   },
+  GMAIL_GET_DRAFT_FAILED: {
+    status: 200,
+    message: "Gmail draft read failed",
+    why: "Gmail drafts.get failed while resolving a draft before mutation",
+    fix: "Check draft id, response status, and Gmail access (gmail.modify) scope",
+    internal: {
+      dependency: "gmail",
+      dependencyOperation: "drafts.get",
+      module: "mail",
+    },
+  },
+  GMAIL_GET_DRAFT_RESPONSE_INVALID: {
+    status: 200,
+    message: "Gmail draft response invalid",
+    why: "Gmail drafts.get returned a response that did not match the expected draft contract",
+    fix: "Check Gmail drafts.get response shape and parser fixture for this request",
+    internal: {
+      dependency: "gmail",
+      dependencyOperation: "drafts.get",
+      module: "mail",
+    },
+  },
   GMAIL_GET_LABEL_FAILED: {
     status: 200,
     message: "Gmail label read failed",
@@ -364,17 +386,6 @@ export const mailErrors = defineErrorCatalog("mail", {
       module: "mail",
     },
   },
-  MAIL_SYNC_REPOSITORY_MISSING: {
-    status: 200,
-    message: "Mailbox temporarily unavailable",
-    why: "The authenticated request context was built without the mail sync repository that cached-mirror writes require",
-    fix: "Wire createPrismaMailSyncRepository into the authenticated route context (see apps/web rpc route)",
-    internal: {
-      dependency: "prisma",
-      dependencyOperation: "mailSyncRepository",
-      module: "mail",
-    },
-  },
   GMAIL_WATCH_RESPONSE_INVALID: {
     status: 200,
     message: "Gmail watch response invalid",
@@ -383,6 +394,17 @@ export const mailErrors = defineErrorCatalog("mail", {
     internal: {
       dependency: "gmail",
       dependencyOperation: "users.watch",
+      module: "mail",
+    },
+  },
+  MAIL_SYNC_REPOSITORY_MISSING: {
+    status: 200,
+    message: "Mailbox temporarily unavailable",
+    why: "The authenticated request context was built without the mail sync repository that cached writes require",
+    fix: "Wire createPrismaMailSyncRepository into the authenticated route context (see apps/web rpc route)",
+    internal: {
+      dependency: "prisma",
+      dependencyOperation: "mailSyncRepository",
       module: "mail",
     },
   },

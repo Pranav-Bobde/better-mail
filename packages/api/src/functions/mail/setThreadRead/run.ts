@@ -17,7 +17,7 @@ export async function runSetThreadRead(
   context: Context,
 ) {
   try {
-    // Read-state writes must reach the local mirror too, so the narrowed
+    // Read-state writes must reach the local cache too, so the narrowed
     // context makes the mail sync repository a required dependency here.
     const mutationContext = requireMailMutationAuthContext(context);
     const result = await runRequest(

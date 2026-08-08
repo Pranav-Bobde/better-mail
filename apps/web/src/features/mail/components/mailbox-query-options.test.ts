@@ -3,7 +3,7 @@ import test from "node:test";
 
 import * as mailboxQueryOptionsModule from "@/features/mail/components/mailbox-query-options";
 
-const { createMailboxQueryOptions } = mailboxQueryOptionsModule;
+const { createMailboxQueryOptions, shouldShowMailboxTransitionLoading } = mailboxQueryOptionsModule;
 
 test("mailbox query options do not poll getMailbox", () => {
   const options = createMailboxQueryOptions({
@@ -15,6 +15,26 @@ test("mailbox query options do not poll getMailbox", () => {
   assert.equal("refetchInterval" in options, false);
   assert.equal(options.refetchOnReconnect, "always");
   assert.equal(options.refetchOnWindowFocus, "always");
+  assert.deepEqual(options.context, { requestTrigger: "mailbox.load" });
+});
+
+test("mailbox query options carry explicit search and refresh trigger context", () => {
+  const searchOptions = createMailboxQueryOptions({
+    folder: "inbox",
+    searchQuery: "project",
+    view: "all",
+  });
+  const refreshOptions = createMailboxQueryOptions(
+    {
+      folder: "inbox",
+      searchQuery: "",
+      view: "all",
+    },
+    "mailbox.refresh",
+  );
+
+  assert.deepEqual(searchOptions.context, { requestTrigger: "mailbox.search" });
+  assert.deepEqual(refreshOptions.context, { requestTrigger: "mailbox.refresh" });
 });
 
 test("mailboxChanged invalidates the mailbox query and ignores malformed events", async () => {
@@ -26,10 +46,10 @@ test("mailboxChanged invalidates the mailbox query and ignores malformed events"
   const invalidations: string[] = [];
   const handler = (
     createMailboxChangedHandler as (
-      invalidateMailbox: () => Promise<void>,
+      invalidateMailbox: (trigger: string) => Promise<void>,
     ) => (event: unknown) => Promise<void>
-  )(async () => {
-    invalidations.push("getMailbox");
+  )(async (trigger) => {
+    invalidations.push(trigger);
   });
 
   await handler({
@@ -39,5 +59,22 @@ test("mailboxChanged invalidates the mailbox query and ignores malformed events"
   });
   await handler({ type: "unknown" });
 
-  assert.deepEqual(invalidations, ["getMailbox"]);
+  assert.deepEqual(invalidations, ["mailbox.realtime"]);
+});
+
+test("search transition hides placeholder rows while ordinary refresh keeps current rows", () => {
+  assert.equal(
+    shouldShowMailboxTransitionLoading({
+      isFetching: true,
+      isPlaceholderData: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldShowMailboxTransitionLoading({
+      isFetching: true,
+      isPlaceholderData: false,
+    }),
+    false,
+  );
 });

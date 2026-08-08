@@ -3,15 +3,22 @@ import type { z } from "zod";
 
 import type { Context } from "../../../context";
 import { mailErrors } from "../../../mail/errors";
-import { MailboxService, logMailboxError } from "../../../mail/mailbox-service";
+import {
+  MailboxService,
+  logMailboxError,
+  requireMailMutationAuthContext,
+} from "../../../mail/mailbox-service";
 import { createRpcSuccessFields } from "../../../observability/rpc/fields";
 import { runRequest } from "../../../runtime";
 import type { sendMailInputSchema } from "./constants";
 
 export async function runSendMail(input: z.infer<typeof sendMailInputSchema>, context: Context) {
   try {
+    const mutationContext = requireMailMutationAuthContext(context);
     const result = await runRequest(
-      Effect.flatMap(MailboxService, (service) => service.sendMailboxMessage(input, context)),
+      Effect.flatMap(MailboxService, (service) =>
+        service.sendMailboxMessage(input, mutationContext),
+      ),
     );
 
     context.log.set(createRpcSuccessFields("mail.send"));
