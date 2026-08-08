@@ -62,6 +62,9 @@ type MailSyncTransactionClient = {
     deleteMany(args: Prisma.MailMessageLabelDeleteManyArgs): Promise<unknown>;
   };
   readonly mailThread: {
+    findUnique(
+      args: Prisma.MailThreadFindUniqueArgs,
+    ): Promise<{ readonly providerHistoryId: bigint | null } | null>;
     update(args: Prisma.MailThreadUpdateArgs): Promise<unknown>;
     upsert(args: Prisma.MailThreadUpsertArgs): Promise<{ readonly id: string }>;
   };
@@ -74,15 +77,18 @@ type MailSyncTransactionClient = {
 export type MailSyncThreadApplyClient = {
   $transaction<Result>(
     callback: (client: MailSyncTransactionClient) => Promise<Result>,
-    options?: { readonly timeout?: number },
+    options?: {
+      readonly isolationLevel?: Prisma.TransactionIsolationLevel;
+      readonly timeout?: number;
+    },
   ): Promise<Result>;
 };
 
 // Structural subset of the Prisma interactive transaction client that the
-// cached-mirror writers (markCachedThread*) touch. Same seam idea as
+// cache writers (markCachedThread*) touch. Same seam idea as
 // MailSyncTransactionClient above: argument types stay pinned to Prisma while
 // narrowed return shapes let unit tests supply a typed in-memory double.
-type MailMirrorTransactionClient = {
+type MailCacheTransactionClient = {
   readonly mailLabel: {
     upsert(args: Prisma.MailLabelUpsertArgs): Promise<{ readonly id: string }>;
   };
@@ -97,17 +103,23 @@ type MailMirrorTransactionClient = {
     findMany(
       args: Prisma.MailThreadFindManyArgs,
     ): Promise<readonly { readonly id: string; readonly mailAccountId: string }[]>;
-    updateMany(args: Prisma.MailThreadUpdateManyArgs): Promise<unknown>;
+    updateMany(args: Prisma.MailThreadUpdateManyArgs): Promise<{ readonly count: number }>;
   };
 };
 
-// The single Prisma capability the cached-mirror writers depend on; the full
+// The single Prisma capability the cache writers depend on; the full
 // PrismaClient stays structurally assignable, mirroring MailSyncThreadApplyClient.
-export type MailMirrorWriteClient = {
+export type MailCacheWriteClient = {
   $transaction<Result>(
-    callback: (client: MailMirrorTransactionClient) => Promise<Result>,
+    callback: (client: MailCacheTransactionClient) => Promise<Result>,
     options?: { readonly timeout?: number },
   ): Promise<Result>;
+};
+
+export type MailThreadDeleteClient = {
+  readonly mailThread: {
+    updateMany(args: Prisma.MailThreadUpdateManyArgs): Promise<{ readonly count: number }>;
+  };
 };
 
 type PrismaMailSyncRepository = ReturnType<typeof createPrismaMailSyncRepository>;
@@ -161,6 +173,8 @@ function createEffectMailSyncRepository(client: PrismaClient) {
       wrapPrismaRequest(() => repository.markCachedThreadArchived(...args)),
     markCachedThreadReadState: (...args) =>
       wrapPrismaRequest(() => repository.markCachedThreadReadState(...args)),
+    reconcileCachedGmailThread: (...args) =>
+      wrapPrismaRequest(() => repository.reconcileCachedGmailThread(...args)),
     markGmailMailboxActivity: (...args) =>
       wrapPrismaRequest(() => repository.markGmailMailboxActivity(...args)),
     markGmailThreadDeleted: (...args) =>
@@ -283,14 +297,23 @@ export function createPrismaMailSyncRepository(client: PrismaClient = prisma) {
         },
       }),
     markCachedThreadArchived: async (input: {
+      readonly historyId: string;
       readonly threadId: string;
       readonly userId: string;
     }) => markCachedThreadArchivedWithClient(client, input),
     markCachedThreadReadState: async (input: {
+      readonly historyId: string;
       readonly read: boolean;
       readonly threadId: string;
       readonly userId: string;
     }) => markCachedThreadReadStateWithClient(client, input),
+    reconcileCachedGmailThread: async (input: {
+      readonly deletionFenceHistoryId?: string;
+      readonly historyId?: string;
+      readonly thread: GmailThread | null;
+      readonly threadId: string;
+      readonly userId: string;
+    }) => reconcileCachedGmailThreadWithClient(client, input),
     markMailAccountAuthError: async (mailAccountId: string) => {
       await client.mailAccount.update({
         data: {
@@ -313,19 +336,10 @@ export function createPrismaMailSyncRepository(client: PrismaClient = prisma) {
       });
     },
     markGmailThreadDeleted: async (input: {
+      readonly historyId?: string;
       readonly mailAccountId: string;
       readonly threadId: string;
-    }) => {
-      await client.mailThread.updateMany({
-        data: {
-          deletedAt: new Date(),
-        },
-        where: {
-          mailAccountId: input.mailAccountId,
-          providerThreadId: input.threadId,
-        },
-      });
-    },
+    }) => markGmailThreadDeletedWithClient(client, input),
     markMailAccountNeedsResync: async (mailAccountId: string) => {
       await client.mailAccount.update({
         data: {
@@ -397,11 +411,20 @@ export function createPrismaMailSyncRepository(client: PrismaClient = prisma) {
       readonly expiresBefore: Date;
     }) => Promise<readonly { readonly id: string }[]>;
     readonly markCachedThreadArchived: (input: {
+      readonly historyId: string;
       readonly threadId: string;
       readonly userId: string;
     }) => Promise<void>;
     readonly markCachedThreadReadState: (input: {
+      readonly historyId: string;
       readonly read: boolean;
+      readonly threadId: string;
+      readonly userId: string;
+    }) => Promise<void>;
+    readonly reconcileCachedGmailThread: (input: {
+      readonly deletionFenceHistoryId?: string;
+      readonly historyId?: string;
+      readonly thread: GmailThread | null;
       readonly threadId: string;
       readonly userId: string;
     }) => Promise<void>;
@@ -653,10 +676,10 @@ function hasCachedMailboxThreads<T extends { readonly threads: readonly unknown[
   return Boolean(mailAccount?.threads?.length);
 }
 
-// Threads are keyed by (mailAccountId, providerThreadId); scoping mirror writes
+// Threads are keyed by (mailAccountId, providerThreadId); scoping cache writes
 // by provider + userId keeps one user's write from ever touching another user's
 // cached copy of the same Gmail thread id.
-function getMirrorThreadScopeWhere(input: { readonly threadId: string; readonly userId: string }) {
+function getCachedThreadScopeWhere(input: { readonly threadId: string; readonly userId: string }) {
   return {
     mailAccount: {
       provider: MailProvider.GMAIL,
@@ -670,16 +693,26 @@ function getMirrorThreadScopeWhere(input: { readonly threadId: string; readonly 
 // (drives the unread-view filter) and the UNREAD label join rows on the
 // thread's messages (drive the per-message `read` flag). Update both.
 export async function markCachedThreadReadStateWithClient(
-  client: MailMirrorWriteClient,
-  input: { readonly read: boolean; readonly threadId: string; readonly userId: string },
+  client: MailCacheWriteClient,
+  input: {
+    readonly historyId: string;
+    readonly read: boolean;
+    readonly threadId: string;
+    readonly userId: string;
+  },
 ) {
   await client.$transaction(async (tx) => {
-    const threadScopeWhere = getMirrorThreadScopeWhere(input);
+    const threadScopeWhere = getCachedThreadScopeWhere(input);
+    const providerHistoryId = parseGmailHistoryId(input.historyId);
 
-    await tx.mailThread.updateMany({
-      data: { isRead: input.read },
-      where: threadScopeWhere,
+    const updated = await tx.mailThread.updateMany({
+      data: { isRead: input.read, providerHistoryId },
+      where: getNewerHistoryThreadWhere(threadScopeWhere, providerHistoryId),
     });
+
+    if (updated.count === 0) {
+      return;
+    }
 
     if (input.read) {
       await tx.mailMessageLabel.deleteMany({
@@ -698,8 +731,8 @@ export async function markCachedThreadReadStateWithClient(
 // Gmail threads.modify applies label changes to every message in the thread,
 // so marking unread restores an UNREAD join on each cached message.
 async function restoreUnreadLabelJoins(
-  tx: MailMirrorTransactionClient,
-  threadScopeWhere: ReturnType<typeof getMirrorThreadScopeWhere>,
+  tx: MailCacheTransactionClient,
+  threadScopeWhere: ReturnType<typeof getCachedThreadScopeWhere>,
 ) {
   const threads = await tx.mailThread.findMany({
     select: { id: true, mailAccountId: true },
@@ -737,26 +770,70 @@ async function restoreUnreadLabelJoins(
   }
 }
 
-// Archive mirrors Gmail's INBOX label removal: the mailThread.isInbox flag
+// Archive follows Gmail's INBOX label removal: the mailThread.isInbox flag
 // drives the cached inbox/archive folder filters, and the INBOX label join
 // rows keep the cached label chips consistent with Gmail.
 export async function markCachedThreadArchivedWithClient(
-  client: MailMirrorWriteClient,
-  input: { readonly threadId: string; readonly userId: string },
+  client: MailCacheWriteClient,
+  input: { readonly historyId: string; readonly threadId: string; readonly userId: string },
 ) {
   await client.$transaction(async (tx) => {
-    const threadScopeWhere = getMirrorThreadScopeWhere(input);
+    const threadScopeWhere = getCachedThreadScopeWhere(input);
+    const providerHistoryId = parseGmailHistoryId(input.historyId);
 
-    await tx.mailThread.updateMany({
-      data: { isInbox: false },
-      where: threadScopeWhere,
+    const updated = await tx.mailThread.updateMany({
+      data: { isInbox: false, providerHistoryId },
+      where: getNewerHistoryThreadWhere(threadScopeWhere, providerHistoryId),
     });
+    if (updated.count === 0) {
+      return;
+    }
     await tx.mailMessageLabel.deleteMany({
       where: {
         label: { providerLabelId: inboxProviderLabelId },
         message: { mailThread: threadScopeWhere },
       },
     });
+  });
+}
+
+async function reconcileCachedGmailThreadWithClient(
+  client: PrismaClient,
+  input: {
+    readonly deletionFenceHistoryId?: string;
+    readonly historyId?: string;
+    readonly thread: GmailThread | null;
+    readonly threadId: string;
+    readonly userId: string;
+  },
+) {
+  const mailAccount = await client.mailAccount.findFirst({
+    select: { id: true },
+    where: {
+      provider: MailProvider.GMAIL,
+      userId: input.userId,
+    },
+  });
+
+  if (!mailAccount) {
+    return;
+  }
+
+  if (!input.thread) {
+    await markGmailThreadDeletedWithClient(client, {
+      deletionFenceHistoryId: input.deletionFenceHistoryId,
+      historyId: input.historyId,
+      mailAccountId: mailAccount.id,
+      threadId: input.threadId,
+    });
+    return;
+  }
+
+  await applyGmailThreadToClient(client, {
+    latestMessageId: getLatestGmailMessage(input.thread).id,
+    mailAccountId: mailAccount.id,
+    thread: input.thread,
+    threadId: input.threadId,
   });
 }
 
@@ -772,15 +849,38 @@ export async function applyGmailThreadToClient(
 ) {
   const latestMessage = getLatestGmailMessage(input.thread);
   const threadFlags = getThreadFlags(input.thread.messages);
+  const providerHistoryId = input.thread.historyId
+    ? parseGmailHistoryId(input.thread.historyId)
+    : null;
 
   await client.$transaction(
     async (tx) => {
+      const existingThread = await tx.mailThread.findUnique({
+        select: { providerHistoryId: true },
+        where: {
+          mailAccountId_providerThreadId: {
+            mailAccountId: input.mailAccountId,
+            providerThreadId: input.threadId,
+          },
+        },
+      });
+
+      if (
+        !shouldApplyGmailThreadSnapshot(
+          existingThread?.providerHistoryId ?? null,
+          input.thread.historyId,
+        )
+      ) {
+        return;
+      }
+
       const mailThread = await tx.mailThread.upsert({
         create: {
           ...threadFlags,
           latestMessageAt: getGmailMessageDate(latestMessage),
           mailAccountId: input.mailAccountId,
           messageCount: input.thread.messages.length,
+          ...(providerHistoryId === null ? {} : { providerHistoryId }),
           providerThreadId: input.threadId,
         },
         update: {
@@ -788,6 +888,7 @@ export async function applyGmailThreadToClient(
           deletedAt: null,
           latestMessageAt: getGmailMessageDate(latestMessage),
           messageCount: input.thread.messages.length,
+          ...(providerHistoryId === null ? {} : { providerHistoryId }),
         },
         where: {
           mailAccountId_providerThreadId: {
@@ -826,8 +927,81 @@ export async function applyGmailThreadToClient(
         });
       }
     },
-    { timeout: gmailThreadTransactionTimeoutMs },
+    {
+      isolationLevel: "Serializable",
+      timeout: gmailThreadTransactionTimeoutMs,
+    },
   );
+}
+
+export function shouldApplyGmailThreadSnapshot(
+  storedHistoryId: bigint | null,
+  incomingHistoryId: string | undefined,
+) {
+  if (incomingHistoryId === undefined) {
+    return storedHistoryId === null;
+  }
+
+  return storedHistoryId === null || parseGmailHistoryId(incomingHistoryId) >= storedHistoryId;
+}
+
+export async function markGmailThreadDeletedWithClient(
+  client: MailThreadDeleteClient,
+  input: {
+    readonly deletionFenceHistoryId?: string;
+    readonly historyId?: string;
+    readonly mailAccountId: string;
+    readonly now?: Date;
+    readonly threadId: string;
+  },
+) {
+  const providerHistoryId = input.historyId ? parseGmailHistoryId(input.historyId) : null;
+  const deletionFenceProviderHistoryId = input.deletionFenceHistoryId
+    ? parseGmailHistoryId(input.deletionFenceHistoryId)
+    : null;
+
+  if (providerHistoryId !== null && deletionFenceProviderHistoryId !== null) {
+    throw new Error("Gmail deletion cannot advance and condition on separate history fences");
+  }
+
+  const whereFenceProviderHistoryId = providerHistoryId ?? deletionFenceProviderHistoryId;
+
+  await client.mailThread.updateMany({
+    data: {
+      deletedAt: input.now ?? new Date(),
+      ...(providerHistoryId === null ? {} : { providerHistoryId }),
+    },
+    where: {
+      mailAccountId: input.mailAccountId,
+      providerThreadId: input.threadId,
+      ...(whereFenceProviderHistoryId === null
+        ? { providerHistoryId: null }
+        : {
+            OR: [
+              { providerHistoryId: null },
+              { providerHistoryId: { lt: whereFenceProviderHistoryId } },
+            ],
+          }),
+    },
+  });
+}
+
+function parseGmailHistoryId(historyId: string) {
+  if (!/^\d+$/u.test(historyId)) {
+    throw new Error(`Invalid Gmail historyId: ${historyId}`);
+  }
+
+  return BigInt(historyId);
+}
+
+function getNewerHistoryThreadWhere(
+  threadScopeWhere: ReturnType<typeof getCachedThreadScopeWhere>,
+  providerHistoryId: bigint,
+) {
+  return {
+    ...threadScopeWhere,
+    OR: [{ providerHistoryId: null }, { providerHistoryId: { lt: providerHistoryId } }],
+  };
 }
 
 async function upsertGmailMessage(

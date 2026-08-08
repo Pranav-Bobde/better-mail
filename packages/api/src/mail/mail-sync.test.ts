@@ -425,6 +425,7 @@ test("MailSyncProcessor surfaces the raw catalog error from a failing repository
       getCachedMailboxData: unused,
       markCachedThreadArchived: unused,
       markCachedThreadReadState: unused,
+      reconcileCachedGmailThread: unused,
       markGmailThreadDeleted: unused,
       markMailAccountAuthError: unused,
       markMailAccountNeedsResync: unused,
@@ -619,10 +620,11 @@ test("marks unavailable Gmail history threads deleted and continues sync", async
   const repository = {
     ...createMailSyncRepository({ mutableOperations }),
     markGmailThreadDeleted: async (input: {
+      readonly historyId?: string;
       readonly mailAccountId: string;
       readonly threadId: string;
     }) => {
-      mutableOperations.push(`mark-thread-deleted:${input.threadId}`);
+      mutableOperations.push(`mark-thread-deleted:${input.threadId}:${input.historyId}`);
     },
   };
   const gmailProvider = {
@@ -687,7 +689,7 @@ test("marks unavailable Gmail history threads deleted and continues sync", async
     "get-thread:thread-1",
     "get-thread:deleted-thread",
     "apply-thread:thread-1:message-2",
-    "mark-thread-deleted:deleted-thread",
+    "mark-thread-deleted:deleted-thread:176009",
     "update-cursor:176009",
     "publish-mailbox-changed",
     "release-lock:cursor-id",
@@ -871,7 +873,7 @@ test("processes changed Gmail threads with bounded concurrency", async () => {
   assert.equal(maxActiveThreadWrites, 1);
 });
 
-test("uses serverless-safe Prisma transaction timeout for Gmail thread cache writes", async () => {
+test("uses a serializable transaction and serverless-safe timeout for Gmail thread cache writes", async () => {
   const transactionOptions: unknown[] = [];
   const repositoryLayer = createThreadApplyRepositoryLayer(
     createPrismaClientForThreadApplyTest(transactionOptions),
@@ -886,7 +888,7 @@ test("uses serverless-safe Prisma transaction timeout for Gmail thread cache wri
     }),
   );
 
-  assert.deepEqual(transactionOptions, [{ timeout: 120000 }]);
+  assert.deepEqual(transactionOptions, [{ isolationLevel: "Serializable", timeout: 120000 }]);
 });
 
 test("marks mail account for resync when Gmail history cursor expired", async () => {
@@ -1108,6 +1110,7 @@ function createThreadApplyRepositoryLayer(client: MailSyncThreadApplyClient) {
       getCachedMailboxData: unused,
       markCachedThreadArchived: unused,
       markCachedThreadReadState: unused,
+      reconcileCachedGmailThread: unused,
       markGmailMailboxActivity: unused,
       markGmailThreadDeleted: unused,
       markMailAccountAuthError: unused,
@@ -1168,6 +1171,7 @@ function createPrismaClientForThreadApplyTest(
       deleteMany: async () => ({}),
     },
     mailThread: {
+      findUnique: async () => null,
       update: async () => ({}),
       upsert: async () => ({ id: "mail-thread-id" }),
     },
@@ -1176,7 +1180,10 @@ function createPrismaClientForThreadApplyTest(
   return {
     $transaction: async <Result>(
       callback: (client: TestMailSyncTransactionClient) => Promise<Result>,
-      options?: { readonly timeout?: number },
+      options?: {
+        readonly isolationLevel?: string;
+        readonly timeout?: number;
+      },
     ) => {
       transactionOptions.push(options);
       return callback(transactionClient);

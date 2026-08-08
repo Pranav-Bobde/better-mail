@@ -44,6 +44,7 @@ export type MailSyncRepository = {
     readonly userId: string;
   } | null>;
   readonly markGmailThreadDeleted: (input: {
+    readonly historyId?: string;
     readonly mailAccountId: string;
     readonly threadId: string;
   }) => Promise<void>;
@@ -199,6 +200,11 @@ type GmailHistoryMessage = {
   readonly threadId: string;
 };
 
+type ChangedGmailThread = {
+  readonly historyId?: string;
+  readonly threadId: string;
+};
+
 export async function processMailSyncEvent(
   rawEvent: MailSyncEvent,
   dependencies: MailSyncProcessorDependencies,
@@ -304,15 +310,15 @@ async function syncGmailHistory(
     mailAccount.syncCursor.cursorValue,
   );
   const history = historyResponse.history ?? [];
-  const changedThreadIds = getChangedThreadIds(history);
+  const changedThreads = getChangedGmailThreads(history);
   const labelCatalog =
-    changedThreadIds.length > 0
+    changedThreads.length > 0
       ? createLabelCatalog(await dependencies.gmailProvider.listLabels(token.accessToken))
       : undefined;
 
   await applyChangedGmailThreads({
     accessToken: token.accessToken,
-    changedThreadIds,
+    changedThreads,
     dependencies,
     labelCatalog,
     mailAccountId: mailAccount.id,
@@ -320,7 +326,7 @@ async function syncGmailHistory(
 
   const checkpoint = getGmailHistoryCheckpoint(historyResponse, history);
   await saveGmailHistoryCheckpoint({
-    changedThreadCount: changedThreadIds.length,
+    changedThreadCount: changedThreads.length,
     checkpoint,
     dependencies,
     mailAccount,
@@ -389,22 +395,25 @@ function createGmailSyncContinuation(
 
 async function applyChangedGmailThreads(input: {
   readonly accessToken: string;
-  readonly changedThreadIds: readonly string[];
+  readonly changedThreads: readonly ChangedGmailThread[];
   readonly dependencies: MailSyncProcessorDependencies;
   readonly labelCatalog?: ReadonlyMap<string, { readonly name: string; readonly type: string }>;
   readonly mailAccountId: string;
 }) {
-  for (let index = 0; index < input.changedThreadIds.length; index += gmailThreadSyncConcurrency) {
-    const threadIds = input.changedThreadIds.slice(index, index + gmailThreadSyncConcurrency);
+  for (let index = 0; index < input.changedThreads.length; index += gmailThreadSyncConcurrency) {
+    const changedThreads = input.changedThreads.slice(index, index + gmailThreadSyncConcurrency);
     const threads = await Promise.all(
-      threadIds.map(async (threadId) => ({
-        thread: await input.dependencies.gmailProvider.getThread(input.accessToken, threadId),
-        threadId,
+      changedThreads.map(async (changedThread) => ({
+        ...changedThread,
+        thread: await input.dependencies.gmailProvider.getThread(
+          input.accessToken,
+          changedThread.threadId,
+        ),
       })),
     );
 
     for (const thread of threads) {
-      await applyChangedGmailThread(input, thread.threadId, thread.thread);
+      await applyChangedGmailThread(input, thread, thread.thread);
     }
   }
 }
@@ -416,13 +425,14 @@ async function applyChangedGmailThread(
     readonly labelCatalog?: ReadonlyMap<string, { readonly name: string; readonly type: string }>;
     readonly mailAccountId: string;
   },
-  threadId: string,
+  changedThread: ChangedGmailThread,
   thread: GmailThread | null,
 ) {
   if (!thread) {
     await input.dependencies.repository.markGmailThreadDeleted({
+      historyId: changedThread.historyId,
       mailAccountId: input.mailAccountId,
-      threadId,
+      threadId: changedThread.threadId,
     });
     return;
   }
@@ -436,14 +446,34 @@ async function applyChangedGmailThread(
   });
 }
 
-function getChangedThreadIds(history: readonly GmailHistoryRecord[]) {
-  const threadIds = new Set<string>();
+function getChangedGmailThreads(history: readonly GmailHistoryRecord[]) {
+  const changedThreads = new Map<string, ChangedGmailThread>();
 
   for (const item of history) {
+    const threadIds = new Set<string>();
     addHistoryRecordThreadIds(threadIds, item);
+
+    for (const threadId of threadIds) {
+      const current = changedThreads.get(threadId);
+
+      if (shouldReplaceChangedThread(current?.historyId, item.id)) {
+        changedThreads.set(threadId, { historyId: item.id, threadId });
+      }
+    }
   }
 
-  return [...threadIds];
+  return [...changedThreads.values()];
+}
+
+function shouldReplaceChangedThread(
+  currentHistoryId: string | undefined,
+  incomingHistoryId: string | undefined,
+) {
+  if (!currentHistoryId) {
+    return true;
+  }
+
+  return Boolean(incomingHistoryId && BigInt(incomingHistoryId) > BigInt(currentHistoryId));
 }
 
 function addHistoryRecordThreadIds(threadIds: Set<string>, item: GmailHistoryRecord) {

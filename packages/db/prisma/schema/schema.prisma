@@ -91,6 +91,7 @@ model MailThread {
   id                 String    @id @default(cuid())
   mailAccountId      String
   providerThreadId   String
+  providerHistoryId  BigInt?
   latestMessageId    String?
   latestMessageAt    DateTime?
   messageCount       Int       @default(0)
