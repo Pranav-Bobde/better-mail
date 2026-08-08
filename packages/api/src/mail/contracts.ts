@@ -1,6 +1,13 @@
 import { z } from "zod";
 
 const mailViewSchema = z.enum(["all", "unread"]);
+const mailHeaderValueSchema = z
+  .string()
+  .min(1)
+  .max(998)
+  .refine((value) => !value.includes("\r") && !value.includes("\n"), {
+    message: "Mail header values cannot contain line breaks",
+  });
 export const mailFolderSchema = z.enum([
   "inbox",
   "drafts",
@@ -22,7 +29,7 @@ export const getMailboxInputSchema = z.object({
 
 export const sendMailInputSchema = z.object({
   body: z.string().min(1).max(20_000),
-  inReplyTo: z.string().min(1).optional(),
+  inReplyTo: mailHeaderValueSchema.optional(),
   subject: z.string().min(1).max(500),
   threadId: z.string().min(1).optional(),
   to: z.email(),
@@ -45,7 +52,7 @@ export const archiveThreadInputSchema = z.object({
 // optional here while the send contract keeps requiring them.
 export const createDraftInputSchema = z.object({
   body: z.string().max(20_000),
-  inReplyTo: z.string().min(1).optional(),
+  inReplyTo: mailHeaderValueSchema.optional(),
   subject: z.string().max(500).optional(),
   threadId: z.string().min(1).optional(),
   to: z.email().optional(),
@@ -54,7 +61,7 @@ export const createDraftInputSchema = z.object({
 export const updateDraftInputSchema = z.object({
   body: z.string().max(20_000),
   draftId: z.string().min(1),
-  inReplyTo: z.string().min(1).optional(),
+  inReplyTo: mailHeaderValueSchema.optional(),
   subject: z.string().max(500).optional(),
   threadId: z.string().min(1).optional(),
   to: z.email().optional(),

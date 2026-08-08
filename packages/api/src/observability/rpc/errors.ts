@@ -1,6 +1,15 @@
 import { defineErrorCatalog } from "evlog";
 
 export const rpcErrors = defineErrorCatalog("rpc", {
+  PROCEDURE_INPUT_INVALID: {
+    status: 200,
+    message: "RPC input validation failed",
+    why: "oRPC rejected the request input before the procedure handler ran",
+    fix: "Correlate the client request id and trigger with the redacted validation issue paths",
+    internal: {
+      module: "rpc",
+    },
+  },
   PROCEDURE_NOT_FOUND: {
     status: 200,
     message: "RPC procedure not found",

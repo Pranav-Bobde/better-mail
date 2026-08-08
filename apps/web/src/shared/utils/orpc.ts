@@ -5,6 +5,8 @@ import { createTanstackQueryUtils } from "@orpc/tanstack-query";
 import { QueryCache, QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import { createRpcRequestDiagnosticHeaders } from "@/shared/utils/rpc-request-diagnostics";
+
 type ApiEnvelope =
   | {
       readonly status: "ok";
@@ -61,19 +63,28 @@ const link = new RPCLink({
 
     return response;
   },
-  headers: async () => {
-    if (typeof window !== "undefined") {
-      return {};
-    }
+  headers: async (options, path, input) => {
+    const forwardedHeaders = await getForwardedRpcHeaders();
 
-    const { headers } = await import("next/headers");
-    return Object.fromEntries(await headers());
+    return {
+      ...forwardedHeaders,
+      ...createRpcRequestDiagnosticHeaders({ context: options.context, input, path }),
+    };
   },
 });
 
 const client: AppRouterClient = createORPCClient(link);
 
 export const orpc = createTanstackQueryUtils(client);
+
+async function getForwardedRpcHeaders() {
+  if (typeof window !== "undefined") {
+    return {};
+  }
+
+  const { headers } = await import("next/headers");
+  return Object.fromEntries(await headers());
+}
 
 function getRpcBaseUrl() {
   if (typeof window !== "undefined") {

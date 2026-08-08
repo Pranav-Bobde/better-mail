@@ -1,4 +1,5 @@
 import type { RpcErrorCode } from "./errors";
+import type { RpcRequestDiagnostics } from "./request-diagnostics";
 import {
   createRpcProcedureMetadata,
   type RpcProcedureMetadata,
@@ -25,6 +26,7 @@ export type RpcWideEventFields =
       readonly procedure: RpcProcedureName;
       readonly outcome: "error";
       readonly rpc: {
+        readonly diagnostics?: RpcRequestDiagnostics;
         readonly errorCode: RpcErrorCode;
         readonly method: string;
         readonly path: string;
@@ -44,11 +46,13 @@ export function createRpcErrorFields(
   metadata: RpcProcedureMetadata,
   errorCode: RpcErrorCode,
   request: Request,
+  diagnostics?: RpcRequestDiagnostics,
 ): RpcWideEventFields {
   return {
     ...metadata,
     outcome: "error",
     rpc: {
+      ...(diagnostics ? { diagnostics } : {}),
       errorCode,
       method: request.method,
       path: new URL(request.url).pathname,

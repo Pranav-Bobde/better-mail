@@ -1,4 +1,5 @@
 import type { RouterClient } from "@orpc/server";
+import type { RpcRequestTrigger } from "../observability/rpc/request-diagnostics";
 
 import {
   archiveThreadInputSchema,
@@ -108,4 +109,8 @@ export const appRouter = {
       .handler(({ input, context }) => runJoinWaitlist(input, context)),
   },
 };
-export type AppRouterClient = RouterClient<typeof appRouter>;
+export type RpcClientContext = {
+  readonly requestTrigger?: RpcRequestTrigger;
+};
+
+export type AppRouterClient = RouterClient<typeof appRouter, RpcClientContext>;

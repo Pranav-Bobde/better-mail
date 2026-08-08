@@ -9,6 +9,10 @@ import {
   getRpcProcedureMetadata,
   type RpcProcedureMetadata,
 } from "@code-main/api/observability/rpc/procedure";
+import {
+  normalizeRpcValidationResponse,
+  type RpcRequestDiagnostics,
+} from "@code-main/api/observability/rpc/request-diagnostics";
 import { appRouter } from "@code-main/api/routers/index";
 import { OpenAPIHandler } from "@orpc/openapi/fetch";
 import { OpenAPIReferencePlugin } from "@orpc/openapi/plugins";
@@ -35,6 +39,7 @@ const apiHandler = new OpenAPIHandler(appRouter, {
 async function handleRequest(req: NextRequest) {
   await identifyEvlogUser(req);
   const log = useLogger<RpcWideEventFields>();
+  const requestForDiagnostics = req.clone();
 
   try {
     const authContext = await createRouteAuthContext(req);
@@ -43,7 +48,17 @@ async function handleRequest(req: NextRequest) {
       prefix: "/api/rpc",
       context: await createRpcContext(req, log, authContext),
     });
-    if (rpcResult.response) return rpcResult.response;
+    if (rpcResult.response) {
+      const normalizedResult = await normalizeRpcValidationResponse(
+        requestForDiagnostics,
+        rpcResult.response,
+      );
+      if (normalizedResult.diagnostics) {
+        logRpcValidationFailure(req, normalizedResult.diagnostics);
+      }
+
+      return normalizedResult.response;
+    }
   } catch (error) {
     return handleRpcError(req, getRpcProcedureMetadata(req), error);
   }
@@ -111,6 +126,28 @@ function handleRpcError(req: Request, metadata: RpcProcedureMetadata, error: unk
     },
     { status: 200 },
   );
+}
+
+function logRpcValidationFailure(req: Request, diagnostics: RpcRequestDiagnostics) {
+  const metadata = getRpcProcedureMetadata(req);
+  const log = useLogger<RpcWideEventFields>();
+  const evlogError = rpcErrors.PROCEDURE_INPUT_INVALID({
+    internal: {
+      bodyBytes: diagnostics.bodyBytes,
+      clientRequestId: diagnostics.clientRequestId,
+      contentType: diagnostics.contentType,
+      handler: metadata.handler,
+      method: req.method,
+      operation: metadata.operation,
+      path: new URL(req.url).pathname,
+      procedure: metadata.procedure,
+      trigger: diagnostics.trigger,
+      validationIssues: diagnostics.validationIssues,
+    },
+  });
+
+  log.set(createRpcErrorFields(metadata, rpcErrors.PROCEDURE_INPUT_INVALID.code, req, diagnostics));
+  log.error(evlogError);
 }
 
 function toRpcEvlogError(metadata: RpcProcedureMetadata, req: Request, error: unknown) {
