@@ -11,7 +11,8 @@
   },
   "scripts": {
     "check-types": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:dev-neon": "RUN_DEV_NEON_INTEGRATION=1 vitest run src/mail/sync/prisma-mail-sync-repository.dev-neon.test.ts"
   },
   "dependencies": {
     "@code-main/db": "workspace:*",
