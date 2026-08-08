@@ -9,10 +9,13 @@ const requiredEnv = {
   BETTER_AUTH_SECRET: "test-secret-with-at-least-32-chars",
   BETTER_AUTH_URL: "http://localhost:4000",
   CORS_ORIGIN: "http://localhost:4000",
+  CRON_SECRET: "test-cron-secret-with-32-characters",
   DATABASE_URL: "postgresql://user:password@localhost:5432/test_db",
   GOOGLE_OAUTH_CLIENT_ID: "test-google-client-id",
   GOOGLE_OAUTH_CLIENT_SECRET: "test-google-client-secret",
   GMAIL_PUBSUB_TOPIC_NAME: "projects/rapid-snowfall-498906-b9/topics/gmail-demo",
+  GMAIL_PUBSUB_PUSH_AUDIENCE: "http://localhost:4000/api/webhooks/gmail",
+  GMAIL_PUBSUB_PUSH_SERVICE_ACCOUNT_EMAIL: "gmail-push@example-project.iam.gserviceaccount.com",
   OPENROUTER_API_KEY: "sk-or-v1-real-shaped-test",
   LANGSMITH_API_KEY: "lsv2_pt_real-shaped-test",
   LANGSMITH_TRACING: "true",
@@ -64,6 +67,21 @@ test("server env contract requires Gmail Pub/Sub topic", () => {
 
   assert.equal(result.success, false);
   assert.equal(result.error?.issues[0]?.path.join("."), "GMAIL_PUBSUB_TOPIC_NAME");
+});
+
+test("server env contract requires authenticated webhook and cron values", () => {
+  const cron = serverEnvSchema.safeParse({ ...requiredEnv, CRON_SECRET: "short" });
+  const audience = serverEnvSchema.safeParse({
+    ...requiredEnv,
+    GMAIL_PUBSUB_PUSH_AUDIENCE: "not-a-url",
+  });
+  const serviceAccount = serverEnvSchema.safeParse({
+    ...requiredEnv,
+    GMAIL_PUBSUB_PUSH_SERVICE_ACCOUNT_EMAIL: "not-an-email",
+  });
+  assert.equal(cron.success, false);
+  assert.equal(audience.success, false);
+  assert.equal(serviceAccount.success, false);
 });
 
 test("server env contract pins the only allowed OpenRouter model", () => {

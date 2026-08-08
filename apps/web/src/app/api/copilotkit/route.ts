@@ -1,5 +1,8 @@
+import { getAuthorizedSession } from "@code-main/auth";
 import { createMailCopilotRuntimeHandler } from "@code-main/api/ai/mail-copilot-runtime";
 
-const handler = createMailCopilotRuntimeHandler();
+import { withSessionAuth } from "@/shared/lib/request-auth";
 
-export { handler as POST };
+const handleMailCopilotRuntime = createMailCopilotRuntimeHandler();
+
+export const POST = withSessionAuth(handleMailCopilotRuntime, getAuthorizedSession);

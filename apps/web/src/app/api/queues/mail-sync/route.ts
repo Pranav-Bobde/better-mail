@@ -171,4 +171,7 @@ function getErrorCode(error: unknown) {
   return typeof code === "string" ? code : undefined;
 }
 
+// The queue/v2beta trigger in vercel.json makes this function unreachable from
+// the public internet. Vercel's internal delivery does not forward send-time
+// custom headers, so application-level callback secrets would reject real work.
 export const POST = withEvlog(handleMailSyncQueueCallback);

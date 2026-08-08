@@ -8,14 +8,25 @@ import {
   type MailSyncWideEventFields,
 } from "@code-main/api/mail/sync/observability";
 import { findRecentlyActiveGmailMailAccountByEmail } from "@code-main/api/runtime";
+import { env } from "@code-main/env/server";
 
 import { useLogger, withEvlog } from "@/shared/lib/evlog";
+import { verifyGooglePubSubPushRequest } from "@/shared/lib/google-pubsub-auth";
 import { vercelMailSyncBroker } from "@/shared/lib/mail-sync-queue";
 
 const activeMailboxWindowMs = 24 * 60 * 60 * 1000;
 
 async function handleGmailWebhook(request: Request) {
   const log = useLogger<MailSyncWideEventFields>();
+  const authenticated = await verifyGooglePubSubPushRequest(request, {
+    audience: env.GMAIL_PUBSUB_PUSH_AUDIENCE,
+    serviceAccountEmail: env.GMAIL_PUBSUB_PUSH_SERVICE_ACCOUNT_EMAIL,
+  });
+
+  if (!authenticated) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
   const payload = await request.json();
   const parsedEnvelope = gmailPubSubPushEnvelopeSchema.safeParse(payload);
 

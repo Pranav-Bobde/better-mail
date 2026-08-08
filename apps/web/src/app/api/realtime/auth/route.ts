@@ -1,4 +1,4 @@
-import { auth } from "@code-main/auth";
+import { getAuthorizedSession } from "@code-main/auth";
 
 import { useLogger, withEvlog } from "@/shared/lib/evlog";
 import { createMailboxRealtimeTokenRequest } from "@/shared/lib/mail-realtime-runtime";
@@ -12,9 +12,7 @@ type MailRealtimeAuthFields = {
 
 async function handleMailboxRealtimeAuth(request: Request) {
   const log = useLogger<MailRealtimeAuthFields>();
-  const session = await auth.api.getSession({
-    headers: request.headers,
-  });
+  const session = await getAuthorizedSession(request.headers);
 
   log.set({
     module: "mail",

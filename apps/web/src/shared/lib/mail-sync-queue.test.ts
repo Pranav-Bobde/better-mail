@@ -115,3 +115,25 @@ test("non-duplicate queue send errors are rethrown", async () => {
     restoreSend();
   }
 });
+
+test("queue relies on its air-gapped Vercel trigger instead of callback headers", async () => {
+  const event: MailSyncEvent = {
+    mailAccountId: "mail-account-id",
+    type: "GMAIL_RENEW_WATCH_REQUESTED",
+  };
+  const sendMock = mock.fn(async (..._arguments: Parameters<typeof send>) => ({
+    messageId: "message-id",
+  }));
+  const restoreSend = mockMailSyncQueueSendForTest(sendMock as typeof send);
+
+  try {
+    await vercelMailSyncBroker.enqueueMailSyncEvent(event);
+
+    assert.deepEqual(sendMock.mock.calls[0]?.arguments[2], {
+      idempotencyKey: "GMAIL_RENEW_WATCH_REQUESTED:mail-account-id",
+      retentionSeconds: 604800,
+    });
+  } finally {
+    restoreSend();
+  }
+});

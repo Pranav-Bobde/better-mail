@@ -16,7 +16,7 @@ import { RPCHandler } from "@orpc/server/fetch";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
 import { EvlogError } from "evlog";
 import { NextRequest } from "next/server";
-import { auth } from "@code-main/auth";
+import { auth, getAuthorizedSession } from "@code-main/auth";
 import { createPrismaMailSyncRepository } from "@code-main/api/mail/sync/prisma-mail-sync-repository";
 
 import { identifyEvlogUser } from "@/shared/lib/evlog-auth";
@@ -67,9 +67,7 @@ async function handleApiReferenceRequest(req: NextRequest) {
 }
 
 async function createRouteAuthContext(req: NextRequest): Promise<AuthContext> {
-  const session = await auth.api.getSession({
-    headers: req.headers,
-  });
+  const session = await getAuthorizedSession(req.headers);
 
   if (!session) {
     return {

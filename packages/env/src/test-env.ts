@@ -10,8 +10,12 @@ export function setRequiredTestEnv() {
   process.env.BETTER_AUTH_URL = "http://localhost:4000";
   process.env.COPILOTKIT_TELEMETRY_DISABLED = "true";
   process.env.CORS_ORIGIN = "http://localhost:4000";
+  process.env.CRON_SECRET = "test-cron-secret-with-32-characters";
   process.env.DATABASE_URL = "postgresql://user:password@localhost:5432/test_db";
   process.env.GMAIL_PUBSUB_TOPIC_NAME = "projects/rapid-snowfall-498906-b9/topics/gmail-demo";
+  process.env.GMAIL_PUBSUB_PUSH_AUDIENCE = "http://localhost:4000/api/webhooks/gmail";
+  process.env.GMAIL_PUBSUB_PUSH_SERVICE_ACCOUNT_EMAIL =
+    "gmail-push@example-project.iam.gserviceaccount.com";
   process.env.GOOGLE_OAUTH_CLIENT_ID = "test-google-client-id";
   process.env.GOOGLE_OAUTH_CLIENT_SECRET = "test-google-client-secret";
   process.env.LANGSMITH_API_KEY = "lsv2_pt_real-shaped-test";

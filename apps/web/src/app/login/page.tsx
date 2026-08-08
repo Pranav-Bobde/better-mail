@@ -1,21 +1,20 @@
-import { auth } from "@code-main/auth";
+import { getAuthorizedSession } from "@code-main/auth";
+import { env } from "@code-main/env/server";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { LoginForm } from "@/features/auth/components/login-form";
-import { SIGN_IN_ENABLED } from "@/shared/lib/access";
+import { isSignInPageEnabled } from "@/shared/lib/access";
 
 export default async function LoginPage() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
+  const session = await getAuthorizedSession(await headers());
 
   if (session) {
     redirect("/");
   }
 
-  // Pre-launch: no public sign-in surface. Send visitors back to the waitlist.
-  if (!SIGN_IN_ENABLED) {
+  // Public sign-in stays closed; stable staging exposes owner-only OAuth.
+  if (!isSignInPageEnabled(env.BETTER_AUTH_URL)) {
     redirect("/");
   }
 

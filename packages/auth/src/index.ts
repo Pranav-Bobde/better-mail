@@ -5,6 +5,7 @@ import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
 
 import { createDeleteUserConfig } from "./delete-user-cleanup";
+import { filterSessionForAuthAccess, mapGoogleProfileForAuthAccess } from "./staging-access";
 
 // gmail.modify is Google's documented superset of the previous readonly+send
 // pair (it does NOT include permanent delete) and unlocks thread label and
@@ -43,6 +44,7 @@ export function createAuth() {
         accessType: "offline",
         clientId: env.GOOGLE_OAUTH_CLIENT_ID,
         clientSecret: env.GOOGLE_OAUTH_CLIENT_SECRET,
+        mapProfileToUser: (profile) => mapGoogleProfileForAuthAccess(env.BETTER_AUTH_URL, profile),
         prompt: "select_account consent",
         scope: [...gmailOAuthScopes],
       },
@@ -69,3 +71,8 @@ export function createAuth() {
 }
 
 export const auth = createAuth();
+
+export async function getAuthorizedSession(headers: Headers) {
+  const session = await auth.api.getSession({ headers });
+  return filterSessionForAuthAccess(env.BETTER_AUTH_URL, session);
+}
