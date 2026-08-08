@@ -4,6 +4,11 @@ import { mailErrors } from "@code-main/api/mail/errors";
 // where `error` is an evlog catalog wire code (`mail.GMAIL_SCOPE_MISSING`).
 // The catalog is the single source of truth for the code and its human message.
 const gmailScopeMissingErrorCode = mailErrors.GMAIL_SCOPE_MISSING.code;
+const gmailReconnectErrorCodes: ReadonlySet<string> = new Set([
+  gmailScopeMissingErrorCode,
+  mailErrors.GMAIL_ACCESS_TOKEN_REQUEST_FAILED.code,
+  mailErrors.GMAIL_ACCOUNT_NOT_CONNECTED.code,
+]);
 
 export function isGmailScopeMissingError(errorCode: string) {
   return errorCode === gmailScopeMissingErrorCode;
@@ -58,11 +63,10 @@ export function shouldRefreshDraftQueriesAfterMutation(result: CacheWriteResult 
   return result?.status === "ok";
 }
 
-// Scope-missing means the user granted the legacy readonly+send scopes and has
-// to re-consent before any write action works — surface a reconnect prompt
-// instead of a plain error toast.
+// Missing scopes or a disconnected Gmail credential require re-consent, so
+// surface the app's reconnect action instead of a plain error.
 export function getMutationErrorPresentation(errorCode: string) {
-  if (isGmailScopeMissingError(errorCode)) {
+  if (gmailReconnectErrorCodes.has(errorCode)) {
     return {
       kind: "reconnect" as const,
       message: "Gmail needs updated permissions",

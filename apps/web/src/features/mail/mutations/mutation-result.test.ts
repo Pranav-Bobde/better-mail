@@ -31,6 +31,20 @@ test("scope-missing errors present as a reconnect prompt", () => {
   });
 });
 
+for (const [errorCode, expectedCode] of [
+  [mailErrors.GMAIL_ACCESS_TOKEN_REQUEST_FAILED.code, "mail.GMAIL_ACCESS_TOKEN_REQUEST_FAILED"],
+  [mailErrors.GMAIL_ACCOUNT_NOT_CONNECTED.code, "mail.GMAIL_ACCOUNT_NOT_CONNECTED"],
+] as const) {
+  test(`${expectedCode} presents as a reconnect prompt`, () => {
+    assert.equal(errorCode, expectedCode);
+    assert.deepEqual(getMutationErrorPresentation(errorCode), {
+      kind: "reconnect",
+      message: "Gmail needs updated permissions",
+      title: "Gmail needs reconnect",
+    });
+  });
+}
+
 test("known catalog codes present their catalog message", () => {
   const presentation = getMutationErrorPresentation(mailErrors.GMAIL_MODIFY_THREAD_FAILED.code);
 
