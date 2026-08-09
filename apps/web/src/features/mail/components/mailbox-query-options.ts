@@ -45,6 +45,13 @@ export function shouldShowMailboxTransitionLoading(input: {
   return input.isFetching && input.isPlaceholderData;
 }
 
+export function getThreadQueryId(
+  hasMailbox: boolean,
+  selectedMail: { readonly threadId: string } | null,
+) {
+  return hasMailbox ? (selectedMail?.threadId ?? "") : "";
+}
+
 export function createMailboxChangedHandler(
   invalidateMailbox: (trigger: "mailbox.realtime") => Promise<void>,
 ) {

@@ -86,6 +86,7 @@ import { MailList } from "@/features/mail/components/mail-list";
 import { MailLoading } from "@/features/mail/components/mail-loading";
 import {
   createMailboxQueryOptions,
+  getThreadQueryId,
   shouldShowMailboxTransitionLoading,
 } from "@/features/mail/components/mailbox-query-options";
 import { refetchMailboxQuery } from "@/features/mail/components/mailbox-refetch";
@@ -266,7 +267,10 @@ function MailWorkspace({
     [buildFolderHref, folder],
   );
   const selectedMail = getSelectedMail(activeMails, selected);
-  const { isLoading: isThreadLoading, messages: threadMessages } = useThreadMessages(selectedMail);
+  const { isLoading: isThreadLoading, messages: threadMessages } = useThreadMessages(
+    mailbox !== null,
+    selectedMail,
+  );
   const openCompose = React.useCallback(() => {
     setCompose({
       ...emptyComposeState,
@@ -1185,8 +1189,8 @@ function getMailboxQueryErrorMessage(
   return null;
 }
 
-function useThreadMessages(selectedMail: MailItem | null) {
-  const threadId = selectedMail?.threadId ?? "";
+function useThreadMessages(hasMailbox: boolean, selectedMail: MailItem | null) {
+  const threadId = getThreadQueryId(hasMailbox, selectedMail);
   const threadQuery = useQuery(
     orpc.mail.getThread.queryOptions({
       enabled: threadId.length > 0,

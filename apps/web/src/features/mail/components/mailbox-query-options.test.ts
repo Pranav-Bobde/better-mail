@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { mails } from "@/features/mail/components/mail-data";
 import * as mailboxQueryOptionsModule from "@/features/mail/components/mailbox-query-options";
 
-const { createMailboxQueryOptions, shouldShowMailboxTransitionLoading } = mailboxQueryOptionsModule;
+const { createMailboxQueryOptions, getThreadQueryId, shouldShowMailboxTransitionLoading } =
+  mailboxQueryOptionsModule;
 
 test("mailbox query options do not poll getMailbox", () => {
   const options = createMailboxQueryOptions({
@@ -77,4 +79,11 @@ test("search transition hides placeholder rows while ordinary refresh keeps curr
     }),
     false,
   );
+});
+
+test("thread query id excludes fallback mail and preserves real mailbox provider ids", () => {
+  const providerThreadId = "18c2f5f6c5f9f001";
+
+  assert.equal(getThreadQueryId(false, mails[0]), "");
+  assert.equal(getThreadQueryId(true, { threadId: providerThreadId }), providerThreadId);
 });
