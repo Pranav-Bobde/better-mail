@@ -19,7 +19,7 @@
     an optimistic patch that must roll back, a mutation that half-succeeded across two
     systems — logging alone is not enough: surface it, normally a toast. Never let an
     optimistic update silently revert with no explanation.
-    Example: `setThreadRead` writes Gmail, then the local mirror. Gmail ok + mirror write
+    Example: `setThreadRead` writes Gmail, then the local cache. Gmail ok + cache write
     failing after internal retries → return 200 ok (Gmail is source of truth, next sync
     heals it), log with full context, **and** toast that the change may briefly reappear.
 
@@ -100,6 +100,10 @@ deploy` is currently a **manual** step against the staging/prod Neon branch (tar
 
 ## E2E / computer-use testing
 
+- Testing boundary: use local for code/UI/API tests with local or dev credentials; use staging
+  for complete hosted OAuth, Pub/Sub/OIDC, Vercel Queue, secrets, and Neon E2E; use production
+  only for a small final smoke test after staging passes. `vercel env pull` may redact sensitive
+  hosted values; create local OAuth state with the local secret instead of copying hosted secrets.
 - OAuth staging rule: Gmail API access is not domain-whitelisted; Google OAuth requires the exact redirect domain to be authorized in Google Cloud. Use the stable staging domain `better-mail-git-staging-pranavbobdes-projects.vercel.app` for OAuth E2E. Do not use random Vercel preview subdomains unless they are explicitly added to Google Cloud first.
 - For real end-to-end verification that needs a live UI (browser / computer-use, e.g.
   Codex), you MAY use the user's own Gmail accounts **`bobdep31@gmail.com`** and
