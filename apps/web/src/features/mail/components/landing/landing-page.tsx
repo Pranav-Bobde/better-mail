@@ -9,10 +9,12 @@ import {
   Keyboard,
   ListChecks,
   MessageSquareText,
+  Play,
   Search,
   Sparkles,
   Star,
 } from "lucide-react";
+import Link from "next/link";
 import * as React from "react";
 
 import { Badge } from "@code-main/ui/components/badge";
@@ -62,6 +64,15 @@ function TopNav() {
             <Star className="size-4" />
             Star
           </a>
+          {/* The workspace itself is desktop/tablet-only (md+), so the demo entry
+              points match that breakpoint instead of leading to a dead end. */}
+          <Link
+            href="/demo"
+            className="hidden h-9 items-center gap-2 rounded-md border border-input bg-transparent px-3 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-accent md:inline-flex"
+          >
+            <Play className="size-4" />
+            Try the demo
+          </Link>
           <a
             href="#waitlist"
             className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90"
@@ -289,6 +300,15 @@ export function LandingPage() {
           </p>
           <div className="mt-8" id="waitlist">
             <WaitlistForm source="landing-hero" />
+            <div className="mt-4 hidden justify-center md:flex">
+              <Link
+                href="/demo"
+                className="inline-flex h-9 items-center gap-2 rounded-md border border-input bg-transparent px-4 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-accent"
+              >
+                <Play className="size-3.5" />
+                Try the live demo
+              </Link>
+            </div>
             <div className="mt-4 flex items-center justify-center gap-4 text-xs text-muted-foreground">
               <a
                 href="https://github.com/Pranav-Bobde/better-mail"

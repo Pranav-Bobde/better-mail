@@ -35,7 +35,12 @@ import {
   shouldRefreshDraftQueriesAfterMutation,
 } from "@/features/mail/mutations/mutation-result";
 import { reconnectGoogleAccount } from "@/features/mail/mutations/reconnect-google";
+import { useMailRpc } from "@/features/mail/demo/demo-mode";
 import { orpc } from "@/shared/utils/orpc";
+
+// Every `orpc.mail.*.key()` below stays on the real client on purpose: oRPC
+// query keys are path-derived, so the demo client produces the same keys and
+// the cache reads/writes here work unchanged in both modes.
 
 // Mail write-action envelopes resolve HTTP 200 with a status union, so a
 // react-query onSuccess fires even for { status: "error" } — every hook below
@@ -79,9 +84,10 @@ export function useSetThreadReadMutation(
   options: { readonly suppressCacheWarning?: boolean } = {},
 ) {
   const queryClient = useQueryClient();
+  const mailRpc = useMailRpc();
 
   return useMutation(
-    orpc.mail.setThreadRead.mutationOptions({
+    mailRpc.setThreadRead.mutationOptions({
       onMutate: async (input) => {
         await queryClient.cancelQueries({ queryKey: orpc.mail.getMailbox.key() });
 
@@ -130,9 +136,10 @@ export function useSetThreadReadMutation(
 
 export function useArchiveThreadMutation(folder: MailFolder) {
   const queryClient = useQueryClient();
+  const mailRpc = useMailRpc();
 
   return useMutation(
-    orpc.mail.archiveThread.mutationOptions({
+    mailRpc.archiveThread.mutationOptions({
       onMutate: async (input) => {
         // Archive clears the INBOX label; the thread must keep showing in
         // Sent/labels/etc., so only inbox lists are optimistically pruned —
@@ -232,9 +239,10 @@ function invalidateMailboxAndDrafts(queryClient: QueryClient) {
 
 export function useCreateDraftMutation() {
   const queryClient = useQueryClient();
+  const mailRpc = useMailRpc();
 
   return useMutation(
-    orpc.mail.createDraft.mutationOptions({
+    mailRpc.createDraft.mutationOptions({
       onError: (error) => {
         showMailMutationError(error.message);
       },
@@ -261,9 +269,10 @@ export function useCreateDraftMutation() {
 
 export function useUpdateDraftMutation() {
   const queryClient = useQueryClient();
+  const mailRpc = useMailRpc();
 
   return useMutation(
-    orpc.mail.updateDraft.mutationOptions({
+    mailRpc.updateDraft.mutationOptions({
       onError: (error) => {
         showMailMutationError(error.message);
       },
@@ -294,9 +303,10 @@ const listDraftsQueryKey = orpc.mail.listDrafts.key({ input: {}, type: "query" }
 
 export function useDeleteDraftMutation() {
   const queryClient = useQueryClient();
+  const mailRpc = useMailRpc();
 
   return useMutation(
-    orpc.mail.deleteDraft.mutationOptions({
+    mailRpc.deleteDraft.mutationOptions({
       onMutate: async (input) => {
         await queryClient.cancelQueries({ queryKey: orpc.mail.getMailbox.key() });
         await queryClient.cancelQueries({ queryKey: orpc.mail.listDrafts.key() });
@@ -372,8 +382,9 @@ function restoreDraftCaches(
 // messageId/threadId → draftId lookup for the Drafts folder, fed by
 // mail.listDrafts. Only fetched while the user is in the Drafts folder.
 export function useDraftIdLookup(folder: MailFolder) {
+  const mailRpc = useMailRpc();
   const draftListQuery = useQuery(
-    orpc.mail.listDrafts.queryOptions({
+    mailRpc.listDrafts.queryOptions({
       enabled: folder === "drafts",
       input: {},
       meta: {

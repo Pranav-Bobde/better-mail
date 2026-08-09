@@ -28,14 +28,17 @@ import {
   Send,
   Sparkles,
   Trash2,
+  UserPlus,
   Users2,
   UserX,
 } from "lucide-react";
+import dynamic from "next/dynamic";
+import Link from "next/link";
 import { usePathname, useSearchParams, type ReadonlyURLSearchParams } from "next/navigation";
 import * as React from "react";
 import { toast } from "sonner";
 
-import { Button } from "@code-main/ui/components/button";
+import { Button, buttonVariants } from "@code-main/ui/components/button";
 import { Input } from "@code-main/ui/components/input";
 import {
   ResizableHandle,
@@ -49,6 +52,7 @@ import { cn } from "@code-main/ui/lib/utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { AccountSwitcher } from "@/features/mail/components/account-switcher";
+import { demoWaitlistHref } from "@/features/mail/components/demo-banner";
 import {
   AskAIPanel,
   DraftEmailPreviewCard,
@@ -117,7 +121,8 @@ import {
   useSetThreadReadMutation,
   useUpdateDraftMutation,
 } from "@/features/mail/mutations/use-mail-mutations";
-import { useMailboxRealtimeInvalidation } from "@/features/mail/realtime/use-mailbox-realtime-invalidation";
+import { useIsDemoMode, useMailRpc } from "@/features/mail/demo/demo-mode";
+import { MailboxRealtimeInvalidation } from "@/features/mail/realtime/use-mailbox-realtime-invalidation";
 import { ModeToggle } from "@/shared/components/mode-toggle";
 import { authClient } from "@/shared/utils/auth-client";
 import { orpc } from "@/shared/utils/orpc";
@@ -134,6 +139,19 @@ const emptyCounts = {
   inboxUnread: 0,
 } satisfies MailboxCounts;
 
+// Demo fixtures are a large, single-purpose payload, so the provider that pulls
+// them in is a separate chunk fetched only on /demo. Client-only: the demo
+// mailbox is browser module state, and there is nothing to render on the server
+// before it exists. The mailbox skeleton covers the extra request.
+const DemoProvider = dynamic(
+  () =>
+    import("@/features/mail/demo/demo-provider").then((demoProvider) => demoProvider.DemoProvider),
+  {
+    loading: () => <MailLoading />,
+    ssr: false,
+  },
+);
+
 const copilotFetchBindingKey = "__codeMainCopilotFetchBound";
 
 type WindowWithCopilotFetchBinding = Window &
@@ -144,28 +162,47 @@ type WindowWithCopilotFetchBinding = Window &
 export function Mail({
   defaultCollapsed = false,
   defaultLayout = defaultMailLayout,
+  demoMode = false,
   navCollapsedSize = 4,
 }: {
   readonly defaultCollapsed?: boolean;
   readonly defaultLayout?: MailLayout;
+  readonly demoMode?: boolean;
   readonly navCollapsedSize?: number;
 }) {
   bindBrowserFetchForCopilotKit();
 
   const [threadId] = React.useState(() => `mail-${crypto.randomUUID()}`);
 
-  return (
-    <CopilotKitProvider runtimeUrl="/api/copilotkit" useSingleEndpoint>
-      <CopilotChatConfigurationProvider agentId="default" hasExplicitThreadId threadId={threadId}>
-        <MailWorkspace
-          defaultCollapsed={defaultCollapsed}
-          defaultLayout={defaultLayout}
-          navCollapsedSize={navCollapsedSize}
-          threadId={threadId}
-        />
-      </CopilotChatConfigurationProvider>
-    </CopilotKitProvider>
+  const workspace = (
+    <>
+      {/* Realtime needs a session, so the demo never mounts it. Mounted here
+          rather than called inside MailWorkspace so its lifetime is unchanged
+          for the real app, including while the mailbox is still loading. */}
+      {demoMode ? null : <MailboxRealtimeInvalidation />}
+      <CopilotKitProvider runtimeUrl={getCopilotRuntimeUrl(demoMode)} useSingleEndpoint>
+        <CopilotChatConfigurationProvider agentId="default" hasExplicitThreadId threadId={threadId}>
+          <MailWorkspace
+            defaultCollapsed={defaultCollapsed}
+            defaultLayout={defaultLayout}
+            navCollapsedSize={navCollapsedSize}
+            threadId={threadId}
+          />
+        </CopilotChatConfigurationProvider>
+      </CopilotKitProvider>
+    </>
   );
+
+  if (!demoMode) {
+    return workspace;
+  }
+
+  return <DemoProvider>{workspace}</DemoProvider>;
+}
+
+// The demo talks to a session-free copy of the same CopilotKit runtime.
+function getCopilotRuntimeUrl(demoMode: boolean) {
+  return demoMode ? "/api/copilotkit/demo" : "/api/copilotkit";
 }
 
 function bindBrowserFetchForCopilotKit() {
@@ -190,8 +227,6 @@ function MailWorkspace({
   readonly navCollapsedSize: number;
   readonly threadId: string;
 }) {
-  useMailboxRealtimeInvalidation();
-
   const [isCollapsed, setIsCollapsed] = React.useState(defaultCollapsed);
   const [selected, setSelected] = React.useState<MailItem["id"] | null>(mails[0].id);
   const [isAiOpen, setIsAiOpen] = React.useState(false);
@@ -1003,10 +1038,60 @@ function MailSidebarPanel({
       <Nav isCollapsed={isCollapsed} links={categoryLinks} />
       <div className={cn("mt-auto grid gap-1 p-2", isCollapsed && "justify-center")}>
         <ModeToggle isCollapsed={isCollapsed} />
-        <MailSignOutButton isCollapsed={isCollapsed} />
-        <MailDeleteAccountButton isCollapsed={isCollapsed} />
+        <MailAccountActions isCollapsed={isCollapsed} />
       </div>
     </ResizablePanel>
+  );
+}
+
+// The demo has no session to sign out of and no account to delete, so it swaps
+// both auth actions for the single action it can offer.
+function MailAccountActions({ isCollapsed }: { readonly isCollapsed: boolean }) {
+  const isDemoMode = useIsDemoMode();
+
+  if (isDemoMode) {
+    return <MailWaitlistButton isCollapsed={isCollapsed} />;
+  }
+
+  return (
+    <>
+      <MailSignOutButton isCollapsed={isCollapsed} />
+      <MailDeleteAccountButton isCollapsed={isCollapsed} />
+    </>
+  );
+}
+
+function MailWaitlistButton({ isCollapsed }: { readonly isCollapsed: boolean }) {
+  if (isCollapsed) {
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Link
+              className={buttonVariants({ size: "icon", variant: "ghost" })}
+              href={demoWaitlistHref}
+            />
+          }
+        >
+          <UserPlus className="size-4" />
+          <span className="sr-only">Join the waitlist</span>
+        </TooltipTrigger>
+        <TooltipContent side="right">Join the waitlist</TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <Link
+      className={cn(
+        buttonVariants({ variant: "ghost" }),
+        "w-full justify-start gap-2 px-2 text-muted-foreground",
+      )}
+      href={demoWaitlistHref}
+    >
+      <UserPlus className="size-4" />
+      <span className="text-sm">Join the waitlist</span>
+    </Link>
   );
 }
 
@@ -1136,9 +1221,10 @@ function isUnreadMail(item: MailItem) {
 
 function useMailboxData(searchQuery: string, view: MailView, folder: MailFolder) {
   const queryClient = useQueryClient();
+  const mailRpc = useMailRpc();
   const mailboxQueryInput = { folder, searchQuery, view };
   const mailboxQuery = useQuery(
-    orpc.mail.getMailbox.queryOptions(createMailboxQueryOptions(mailboxQueryInput)),
+    mailRpc.getMailbox.queryOptions(createMailboxQueryOptions(mailboxQueryInput)),
   );
 
   const mailbox = mailboxQuery.data?.status === "ok" ? mailboxQuery.data.data : null;
@@ -1152,7 +1238,7 @@ function useMailboxData(searchQuery: string, view: MailView, folder: MailFolder)
     isTransitioning: shouldShowMailboxTransitionLoading(mailboxQuery),
     mailbox,
     refetchMailbox: () => {
-      void refetchMailboxQuery(queryClient, mailboxQueryInput, "mailbox.refresh");
+      void refetchMailboxQuery(queryClient, mailboxQueryInput, "mailbox.refresh", mailRpc);
     },
   };
 }
@@ -1197,9 +1283,10 @@ function getMailboxQueryErrorMessage(
 }
 
 function useThreadMessages(hasMailbox: boolean, selectedMail: MailItem | null) {
+  const mailRpc = useMailRpc();
   const threadId = getThreadQueryId(hasMailbox, selectedMail);
   const threadQuery = useQuery(
-    orpc.mail.getThread.queryOptions({
+    mailRpc.getThread.queryOptions({
       enabled: threadId.length > 0,
       input: { threadId },
       meta: {
@@ -1228,9 +1315,10 @@ function getThreadMessages(result: GetThreadOutput | undefined) {
 
 function useSendReplyMutation() {
   const queryClient = useQueryClient();
+  const mailRpc = useMailRpc();
 
   return useMutation(
-    orpc.mail.send.mutationOptions({
+    mailRpc.send.mutationOptions({
       onError: (error) => {
         toast.error(`Error: ${error.message}`);
       },

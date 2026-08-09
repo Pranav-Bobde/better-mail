@@ -6,6 +6,7 @@ import type { RpcRequestTrigger } from "@code-main/api/observability/rpc/request
 
 import type { MailView } from "@/features/mail/components/mail-ai-tools";
 import { createMailboxQueryOptions } from "@/features/mail/components/mailbox-query-options";
+import type { MailRpcUtils } from "@/features/mail/demo/demo-mode";
 import { orpc } from "@/shared/utils/orpc";
 
 type MailboxRequestTrigger = Extract<RpcRequestTrigger, `mailbox.${string}`>;
@@ -22,8 +23,11 @@ export async function refetchMailboxQuery(
     readonly view: MailView;
   },
   requestTrigger: MailboxRequestTrigger,
+  // The manual "Refresh mailbox" button reaches this from the demo too, so the
+  // caller can hand in the demo client. Query keys are identical either way.
+  mailRpc: MailRpcUtils = orpc.mail,
 ) {
-  const queryOptions = orpc.mail.getMailbox.queryOptions(
+  const queryOptions = mailRpc.getMailbox.queryOptions(
     createMailboxQueryOptions(input, requestTrigger),
   );
 

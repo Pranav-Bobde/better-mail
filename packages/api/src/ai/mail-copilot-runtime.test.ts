@@ -1,18 +1,48 @@
 import assert from "node:assert/strict";
 
-import { test } from "vitest";
+import { test, vi } from "vitest";
 
 import {
   convertMessagesToVercelAISDKMessages,
   convertToolsToVercelAITools,
 } from "@copilotkit/runtime/v2";
 
+// mail-copilot-runtime.ts imports `env` at module scope (for the agent factory
+// closure), and @code-main/env/server validates process.env eagerly on import.
+// Stub it so this suite doesn't require real OpenRouter/LangSmith secrets.
+vi.mock("@code-main/env/server", () => ({
+  env: {
+    LANGSMITH_API_KEY: "test-langsmith-key",
+    LANGSMITH_PROJECT: "test-project",
+    OPENROUTER_API_KEY: "test-openrouter-key",
+    OPENROUTER_MODEL: "openai/gpt-5.4-nano",
+  },
+}));
+
 import { mailAssistantSystemPrompt, openRouterRoutingOptions } from "./mail-assistant";
+import { createMailCopilotRuntime } from "./mail-copilot-runtime";
 import {
   buildMailAssistantSystemPrompt,
   runMailAssistantFactory,
   type RuntimeFactoryContext,
 } from "./mail-copilot-runtime-options";
+
+test("each createMailCopilotRuntime() call owns an isolated runner (no shared run-store across callers)", () => {
+  const runtimeForAuthenticatedRoute = createMailCopilotRuntime();
+  const runtimeForDemoRoute = createMailCopilotRuntime();
+
+  assert.notEqual(
+    runtimeForAuthenticatedRoute,
+    runtimeForDemoRoute,
+    "each caller must receive its own CopilotRuntime instance",
+  );
+  assert.notEqual(
+    runtimeForAuthenticatedRoute.runner,
+    runtimeForDemoRoute.runner,
+    "each caller must receive its own AgentRunner so agent/connect and agent/stop " +
+      "for one caller's threadId cannot reach another caller's in-flight run",
+  );
+});
 
 test("copilot runtime converts messages and frontend tools to AI SDK inputs", () => {
   const messages = convertMessagesToVercelAISDKMessages([

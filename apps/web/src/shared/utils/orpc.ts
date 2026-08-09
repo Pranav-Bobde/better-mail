@@ -25,7 +25,7 @@ declare module "@tanstack/react-query" {
   }
 }
 
-function createQueryClient() {
+export function createQueryClient() {
   return new QueryClient({
     queryCache: new QueryCache({
       onError: (error, query) => {

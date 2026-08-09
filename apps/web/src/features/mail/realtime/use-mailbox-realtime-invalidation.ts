@@ -8,7 +8,16 @@ import { refetchActiveMailboxQueries } from "@/features/mail/components/mailbox-
 import { ablyMailRealtimeSubscriber } from "@/features/mail/realtime/mail-realtime-client";
 import { authClient } from "@/shared/utils/auth-client";
 
-export function useMailboxRealtimeInvalidation() {
+// Mount point for the subscription. Rendering it conditionally is how callers
+// opt out (the public demo has no session, so it must not run the hook at all
+// and must not fire the session lookup the hook depends on).
+export function MailboxRealtimeInvalidation() {
+  useMailboxRealtimeInvalidation();
+
+  return null;
+}
+
+function useMailboxRealtimeInvalidation() {
   const queryClient = useQueryClient();
   const { data: session } = authClient.useSession();
   const invalidateMailbox = React.useCallback(

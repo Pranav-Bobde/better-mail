@@ -16,43 +16,50 @@ import {
 } from "./mail-assistant";
 import { runMailAssistantFactory } from "./mail-copilot-runtime-options";
 
-const mailCopilotRuntime = new CopilotRuntime({
-  agents: {
-    default: new BuiltInAgent({
-      type: "aisdk",
-      async factory(ctx) {
-        const langsmith = new Client({
-          apiKey: env.LANGSMITH_API_KEY,
-        });
-        const telemetry = LangSmithTelemetry({
-          client: langsmith,
-          name: "mail-assistant",
-          projectName: env.LANGSMITH_PROJECT,
-        });
-        const openrouter = createOpenRouter(env);
+// Each caller must own an isolated runtime + run-store. CopilotKit single-route
+// mode dispatches agent/connect and agent/stop purely from the client-supplied
+// threadId, so a shared InMemoryAgentRunner would let one caller (e.g. the
+// unauthenticated demo route) attach to or stop another caller's in-flight run.
+// Do not hoist this back to a module-level singleton.
+export function createMailCopilotRuntime() {
+  return new CopilotRuntime({
+    agents: {
+      default: new BuiltInAgent({
+        type: "aisdk",
+        async factory(ctx) {
+          const langsmith = new Client({
+            apiKey: env.LANGSMITH_API_KEY,
+          });
+          const telemetry = LangSmithTelemetry({
+            client: langsmith,
+            name: "mail-assistant",
+            projectName: env.LANGSMITH_PROJECT,
+          });
+          const openrouter = createOpenRouter(env);
 
-        return runMailAssistantFactory({
-          ctx,
-          model: openrouter.chat(env.OPENROUTER_MODEL),
-          providerOptions: openRouterRoutingOptions,
-          streamText: ai.streamText,
-          systemPrompt: mailAssistantSystemPrompt,
-          telemetry: {
-            functionId: "mail-assistant",
-            integrations: [telemetry],
-            isEnabled: true,
-          },
-        });
-      },
-    }),
-  },
-  runner: new InMemoryAgentRunner(),
-});
+          return runMailAssistantFactory({
+            ctx,
+            model: openrouter.chat(env.OPENROUTER_MODEL),
+            providerOptions: openRouterRoutingOptions,
+            streamText: ai.streamText,
+            systemPrompt: mailAssistantSystemPrompt,
+            telemetry: {
+              functionId: "mail-assistant",
+              integrations: [telemetry],
+              isEnabled: true,
+            },
+          });
+        },
+      }),
+    },
+    runner: new InMemoryAgentRunner(),
+  });
+}
 
 export function createMailCopilotRuntimeHandler() {
   return createCopilotRuntimeHandler({
     basePath: "/api/copilotkit",
     mode: "single-route",
-    runtime: mailCopilotRuntime,
+    runtime: createMailCopilotRuntime(),
   });
 }
