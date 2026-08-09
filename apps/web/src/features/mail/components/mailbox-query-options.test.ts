@@ -4,8 +4,12 @@ import test from "node:test";
 import { mails } from "@/features/mail/components/mail-data";
 import * as mailboxQueryOptionsModule from "@/features/mail/components/mailbox-query-options";
 
-const { createMailboxQueryOptions, getThreadQueryId, shouldShowMailboxTransitionLoading } =
-  mailboxQueryOptionsModule;
+const {
+  createMailboxQueryOptions,
+  getProviderSelectedMail,
+  getThreadQueryId,
+  shouldShowMailboxTransitionLoading,
+} = mailboxQueryOptionsModule;
 
 test("mailbox query options do not poll getMailbox", () => {
   const options = createMailboxQueryOptions({
@@ -86,4 +90,15 @@ test("thread query id excludes fallback mail and preserves real mailbox provider
 
   assert.equal(getThreadQueryId(false, mails[0]), "");
   assert.equal(getThreadQueryId(true, { threadId: providerThreadId }), providerThreadId);
+});
+
+test("provider selection excludes fallback mail and preserves real mailbox mail", () => {
+  const providerMail = {
+    id: "18c2f5f6c5f9f001",
+    threadId: "18c2f5f6c5f9f001",
+  };
+
+  assert.equal(getProviderSelectedMail(false, mails[0]), null);
+  assert.strictEqual(getProviderSelectedMail(true, providerMail), providerMail);
+  assert.deepEqual(getProviderSelectedMail(true, providerMail), providerMail);
 });

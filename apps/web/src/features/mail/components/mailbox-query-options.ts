@@ -49,7 +49,11 @@ export function getThreadQueryId(
   hasMailbox: boolean,
   selectedMail: { readonly threadId: string } | null,
 ) {
-  return hasMailbox ? (selectedMail?.threadId ?? "") : "";
+  return getProviderSelectedMail(hasMailbox, selectedMail)?.threadId ?? "";
+}
+
+export function getProviderSelectedMail<Mail>(hasMailbox: boolean, selectedMail: Mail | null) {
+  return hasMailbox ? selectedMail : null;
 }
 
 export function createMailboxChangedHandler(

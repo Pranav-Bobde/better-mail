@@ -86,6 +86,7 @@ import { MailList } from "@/features/mail/components/mail-list";
 import { MailLoading } from "@/features/mail/components/mail-loading";
 import {
   createMailboxQueryOptions,
+  getProviderSelectedMail,
   getThreadQueryId,
   shouldShowMailboxTransitionLoading,
 } from "@/features/mail/components/mailbox-query-options";
@@ -267,6 +268,7 @@ function MailWorkspace({
     [buildFolderHref, folder],
   );
   const selectedMail = getSelectedMail(activeMails, selected);
+  const providerSelectedMail = getProviderSelectedMail(mailbox !== null, selectedMail);
   const { isLoading: isThreadLoading, messages: threadMessages } = useThreadMessages(
     mailbox !== null,
     selectedMail,
@@ -291,7 +293,7 @@ function MailWorkspace({
   // Opening an unread thread marks it read (new intentional behavior). Gated
   // on a real mailbox so the demo fallback list never fires Gmail mutations.
   useAutoMarkThreadRead(
-    getAutoMarkReadTarget(mailbox, selectedMail),
+    providerSelectedMail,
     autoSetThreadReadMutation.mutate,
     manualUnreadThreadIds,
   );
@@ -355,11 +357,11 @@ function MailWorkspace({
   const openDraftInCompose = React.useCallback(
     (draft: DraftEmailInput) => {
       setActiveDraft(draft);
-      setCompose(createComposeStateFromDraft(draft, selectedMail));
+      setCompose(createComposeStateFromDraft(draft, providerSelectedMail));
       setComposeNotice("");
       setEditingDraftId(null);
     },
-    [selectedMail],
+    [providerSelectedMail],
   );
 
   // A forward starts a brand-new thread to a new recipient: open compose with a
@@ -382,7 +384,7 @@ function MailWorkspace({
 
   const sendDraft = React.useCallback(
     async (draft: DraftEmailInput) => {
-      const nextCompose = createComposeStateFromDraft(draft, selectedMail);
+      const nextCompose = createComposeStateFromDraft(draft, providerSelectedMail);
       await sendMailMutation.mutateAsync({
         body: draft.body,
         inReplyTo: nextCompose.inReplyTo,
@@ -394,7 +396,7 @@ function MailWorkspace({
       setCompose(emptyComposeState);
       setComposeNotice("");
     },
-    [selectedMail, sendMailMutation],
+    [providerSelectedMail, sendMailMutation],
   );
 
   const markDraftDecision = React.useCallback(
@@ -518,34 +520,34 @@ function MailWorkspace({
   );
 
   function toggleSelectedThreadRead() {
-    if (!selectedMail) {
+    if (!providerSelectedMail) {
       return;
     }
 
-    const read = !selectedMail.read;
+    const read = !providerSelectedMail.read;
     setManualUnreadThreadIds((current) =>
-      setManualUnreadIntent(current, selectedMail.threadId, !read),
+      setManualUnreadIntent(current, providerSelectedMail.threadId, !read),
     );
     setThreadReadMutation.mutate({
       read,
-      threadId: selectedMail.threadId,
+      threadId: providerSelectedMail.threadId,
     });
   }
 
   function archiveSelectedThread() {
-    if (!selectedMail) {
+    if (!providerSelectedMail) {
       return;
     }
 
-    archiveThreadMutation.mutate({ threadId: selectedMail.threadId });
+    archiveThreadMutation.mutate({ threadId: providerSelectedMail.threadId });
   }
 
   function getSelectedDraftId() {
-    if (!selectedMail) {
+    if (!providerSelectedMail) {
       return null;
     }
 
-    const draftId = resolveDraftId(draftIdLookup, selectedMail);
+    const draftId = resolveDraftId(draftIdLookup, providerSelectedMail);
 
     if (draftId === null) {
       toast.error("Could not find this draft. Refresh the mailbox and try again.");
@@ -559,15 +561,15 @@ function MailWorkspace({
   function deleteSelectedDraft() {
     const draftId = getSelectedDraftId();
 
-    if (draftId === null || selectedMail === null) {
+    if (draftId === null || providerSelectedMail === null) {
       return;
     }
 
-    deleteDraftMutation.mutate({ draftId, threadId: selectedMail.threadId });
+    deleteDraftMutation.mutate({ draftId, threadId: providerSelectedMail.threadId });
   }
 
   function editSelectedDraft() {
-    if (!selectedMail) {
+    if (!providerSelectedMail) {
       return;
     }
 
@@ -579,7 +581,7 @@ function MailWorkspace({
 
     setActiveDraft(null);
     setEditingDraftId(draftId);
-    setCompose(createComposeStateFromDraftMessage(selectedMail));
+    setCompose(createComposeStateFromDraftMessage(providerSelectedMail));
     setComposeNotice("");
   }
 
@@ -692,11 +694,16 @@ function MailWorkspace({
             onSendCompose={() => void sendCurrentCompose()}
             onToggleThreadRead={toggleSelectedThreadRead}
             onSendReply={(mail, body) => {
+              const providerReplyTarget = getProviderSelectedMail(mailbox !== null, mail);
+              if (providerReplyTarget === null) {
+                return;
+              }
+
               sendMailMutation.mutate({
                 body,
-                subject: getReplySubject(mail.subject),
-                threadId: mail.threadId,
-                to: mail.email,
+                subject: getReplySubject(providerReplyTarget.subject),
+                threadId: providerReplyTarget.threadId,
+                to: providerReplyTarget.email,
               });
             }}
             threadMessages={threadMessages}
@@ -1324,12 +1331,6 @@ function getSearchableMailText(mail: MailItem) {
 
 function getMailboxCounts(mailbox: MailboxData | null) {
   return mailbox?.counts ?? fallbackCounts;
-}
-
-// Auto-mark-read stays off for the demo fallback list: without a real mailbox
-// there is no Gmail thread to mutate.
-function getAutoMarkReadTarget(mailbox: MailboxData | null, selectedMail: MailItem | null) {
-  return mailbox ? selectedMail : null;
 }
 
 function getMailboxAccount(mailbox: MailboxData | null) {
