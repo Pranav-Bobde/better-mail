@@ -2,9 +2,11 @@
 
 AI-assisted email client built with Next.js, Gmail APIs, Google OAuth, CopilotKit, oRPC, Prisma, Neon/PostgreSQL, and LangSmith.
 
+I built this as an AI-led implementation experiment, using coding agents and verification tools to reach a working demo. The original demo was Gmail-first and used polling. The current code includes Gmail watch, Pub/Sub notifications and history sync.
+
 ## Demo
 
-Demo link: [link](https://drive.google.com/file/d/1p7fPgQxuebJGRDCr0QZyoSMkoCbz2Dxd/view?usp=sharing)
+[Watch the demo](https://drive.google.com/file/d/1p7fPgQxuebJGRDCr0QZyoSMkoCbz2Dxd/view?usp=sharing)
 
 ## How To Setup
 
@@ -64,10 +66,12 @@ pnpm run verify
 
 ## Architecture Decisions And Tradeoffs
 
+The decisions and follow-up ideas below describe the original demo.
+
 Main factors:
 
 - Time
-- Assignment scope
+- Demo scope
 - Demo reliability
 
 Stack choices:
@@ -82,7 +86,7 @@ Stack choices:
 
 Tradeoffs:
 
-- **Polling over real mailbox sync**: used normal refetching instead of Gmail Pub/Sub/history sync to keep scope small and spend time on the remaining assignment features.
+- **Polling in the original demo**: Used polling to keep the demo scope small.
 - **Gmail-first provider implementation**: Gmail is implemented directly today; before adding Microsoft/other providers, the mail layer should move behind a provider adapter.
 - **Functional prompts over deeply tuned prompts**: prompts are kept good enough for working demo flows, but they are not heavily evaluated or optimized.
 - **Minimal email persistence**: the database is used for auth/session/token data; emails remain in the provider mailbox.
