@@ -87,7 +87,7 @@ Stack choices:
 Tradeoffs:
 
 - **Polling in the original demo**: Used polling to keep the demo scope small.
-- **Gmail-first provider implementation**: Gmail is implemented directly today; before adding Microsoft/other providers, the mail layer should move behind a provider adapter.
+- **Gmail-first provider implementation**: The original demo implemented Gmail directly; other providers would need a provider adapter.
 - **Functional prompts over deeply tuned prompts**: prompts are kept good enough for working demo flows, but they are not heavily evaluated or optimized.
 - **Minimal email persistence**: the database is used for auth/session/token data; emails remain in the provider mailbox.
 
